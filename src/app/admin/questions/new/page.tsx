@@ -10,14 +10,14 @@ import type { Question } from "@/types/question";
 type QuestionType = "multiple_choice" | "binary_choice";
 
 const multipleChoiceDefaults = {
-  prompt: "다음 중 어법상 올바른 문장은?",
+  prompt: "다음 중 어법상 올바른 문장을 선택하세요.",
   choices: [
-    "She don't like coffee.",
     "She doesn't like coffee.",
+    "She don't like coffee.",
     "She not like coffee.",
     "She isn't like coffee.",
   ],
-  answer: 1,
+  answer: 0,
 };
 
 const binaryChoiceDefaults = {
@@ -47,10 +47,14 @@ export default function NewQuestionPage() {
     binaryChoiceDefaults.choices,
   );
   const [binaryAnswer, setBinaryAnswer] = useState(binaryChoiceDefaults.answer);
+  const [showPreview, setShowPreview] = useState(true);
   const [notice, setNotice] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [savedQuestionId, setSavedQuestionId] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+
+  const activePrompt =
+    questionType === "multiple_choice" ? multiplePrompt : binaryPrompt;
 
   const questionJson: Question = useMemo(() => {
     const optionalFields = {
@@ -94,31 +98,37 @@ export default function NewQuestionPage() {
 
   function validateQuestion(question: Question) {
     if (!question.prompt) {
-      return "prompt를 입력하세요.";
+      return "문항 본문을 입력하세요.";
     }
 
     if (question.type === "multiple_choice") {
-      if (question.choices.length !== 4 || question.choices.some((choice) => !choice)) {
-        return "객관식은 choice 4개가 모두 필요합니다.";
+      if (
+        question.choices.length !== 4 ||
+        question.choices.some((choice) => !choice)
+      ) {
+        return "객관식은 선택지 4개가 모두 필요합니다.";
       }
 
       if (question.answer < 0 || question.answer >= question.choices.length) {
-        return "객관식 정답 인덱스가 유효하지 않습니다.";
+        return "객관식 정답 번호가 유효하지 않습니다.";
       }
 
       return "";
     }
 
     if (!question.prompt.includes("{{choice}}")) {
-      return "이항대립 prompt에는 반드시 {{choice}}가 포함되어야 합니다.";
+      return "이항대립 문항 본문에는 반드시 {{choice}}가 포함되어야 합니다.";
     }
 
-    if (question.choices.length !== 2 || question.choices.some((choice) => !choice)) {
-      return "이항대립은 choice 2개가 모두 필요합니다.";
+    if (
+      question.choices.length !== 2 ||
+      question.choices.some((choice) => !choice)
+    ) {
+      return "이항대립은 choice A와 choice B가 모두 필요합니다.";
     }
 
     if (question.answer !== 0 && question.answer !== 1) {
-      return "이항대립 정답 인덱스가 유효하지 않습니다.";
+      return "이항대립 정답 번호가 유효하지 않습니다.";
     }
 
     return "";
@@ -143,6 +153,7 @@ export default function NewQuestionPage() {
   async function handleCopyJson() {
     await navigator.clipboard.writeText(jsonPreview);
     setNotice("JSON을 클립보드에 복사했습니다.");
+    setErrorMessage("");
   }
 
   async function handleSaveQuestion() {
@@ -167,11 +178,11 @@ export default function NewQuestionPage() {
       });
 
       setSavedQuestionId(docRef.id);
-      setNotice("저장되었습니다. 입력값은 이어서 확인할 수 있도록 초기화하지 않았습니다.");
+      setNotice("저장되었습니다. 입력값은 초기화하지 않았습니다.");
     } catch (error) {
       setErrorMessage(
         error instanceof Error
-          ? error.message
+          ? `저장 실패: ${error.message}`
           : "문항 저장 중 알 수 없는 오류가 발생했습니다.",
       );
     } finally {
@@ -181,109 +192,53 @@ export default function NewQuestionPage() {
 
   return (
     <main className="min-h-screen bg-canvas-dark text-body-on-dark">
-      <header className="border-b border-hairline-on-dark bg-canvas-dark">
-        <nav className="mx-auto flex min-h-16 max-w-page items-center justify-between gap-4 px-5 py-4 sm:px-6 lg:px-8">
-          <Image
-            src="/canb-logo.png"
-            alt="CANB English"
-            width={1109}
-            height={544}
-            priority
-            className="h-9 w-auto"
-          />
-          <Link className="button-secondary-on-dark" href="/dashboard">
-            대시보드로 돌아가기
-          </Link>
-          <Link className="button-secondary-on-dark" href="/admin/questions">
-            문제 목록 보기
-          </Link>
-        </nav>
-      </header>
-
-      <section className="mx-auto max-w-page px-5 py-10 sm:px-6 lg:px-8">
-        <div className="max-w-2xl">
-          <p className="text-sm font-semibold text-primary">Question Builder</p>
-          <h1 className="mt-3 text-3xl font-bold text-body-on-dark sm:text-display-lg">
-            문항 만들기
-          </h1>
-          <p className="mt-4 text-sm leading-6 text-muted">
-            Firestore 저장 없이 입력값과 JSON 구조만 확인하는 mock
-            화면입니다.
-          </p>
-        </div>
-
-        <div className="mt-10 grid gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
-          <section className="rounded-xl border border-hairline-on-dark bg-surface-card-dark p-5 sm:p-6">
-            <div>
-              <p className="text-sm font-semibold text-body-on-dark">
-                유형 선택
-              </p>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                {[
-                  { label: "객관식", value: "multiple_choice" },
-                  { label: "이항대립", value: "binary_choice" },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    className={`min-h-11 rounded-md border px-4 text-sm font-semibold transition ${
-                      questionType === option.value
-                        ? "border-primary bg-primary text-on-primary"
-                        : "border-hairline-on-dark bg-canvas-dark text-body-on-dark hover:bg-surface-elevated-dark"
-                    }`}
-                    type="button"
-                    onClick={() => setQuestionType(option.value as QuestionType)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
+      <header className="sticky top-0 z-20 border-b border-hairline-on-dark bg-surface-card-dark">
+        <div className="mx-auto flex max-w-page flex-col gap-3 px-4 py-3 sm:px-6 lg:px-8">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <Image
+                src="/canb-logo.png"
+                alt="CANB English"
+                width={1109}
+                height={544}
+                priority
+                className="h-8 w-auto"
+              />
+              <span className="hidden text-sm font-semibold text-muted sm:inline">
+                CANB Admin
+              </span>
             </div>
 
-            <div className="mt-8 grid gap-5">
-              <label className="block">
-                <span className="text-sm font-semibold text-body-on-dark">
-                  문항 제목 또는 태그 optional
-                </span>
-                <input
-                  className="field-on-dark mt-2"
-                  value={title}
-                  onChange={(event) => setTitle(event.target.value)}
-                />
-              </label>
+            <span className="rounded-sm border border-primary/40 bg-canvas-dark px-3 py-2 text-sm font-bold text-primary">
+              001
+            </span>
 
-              <label className="block">
-                <span className="text-sm font-semibold text-body-on-dark">
-                  explanation
-                </span>
-                <textarea
-                  className="field-on-dark mt-2 min-h-28"
-                  value={explanation}
-                  onChange={(event) => setExplanation(event.target.value)}
-                />
-              </label>
+            <select
+              className="h-10 min-w-36 rounded-md border border-hairline-on-dark bg-canvas-dark px-3 text-sm font-semibold text-body-on-dark"
+              value={questionType}
+              onChange={(event) =>
+                setQuestionType(event.target.value as QuestionType)
+              }
+            >
+              <option value="multiple_choice">객관식</option>
+              <option value="binary_choice">이항대립</option>
+            </select>
 
-              {questionType === "multiple_choice" ? (
-                <MultipleChoiceFields
-                  prompt={multiplePrompt}
-                  choices={multipleChoices}
-                  answer={multipleAnswer}
-                  onPromptChange={setMultiplePrompt}
-                  onChoiceChange={updateMultipleChoice}
-                  onAnswerChange={setMultipleAnswer}
-                />
-              ) : (
-                <BinaryChoiceFields
-                  prompt={binaryPrompt}
-                  choices={binaryChoices}
-                  answer={binaryAnswer}
-                  onPromptChange={setBinaryPrompt}
-                  onChoiceChange={updateBinaryChoice}
-                  onAnswerChange={setBinaryAnswer}
-                />
-              )}
+            <div className="min-w-0 flex-1 text-center text-sm font-semibold text-body-on-dark">
+              문항 / 정답 입력
             </div>
 
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                className="button-secondary-on-dark"
+                type="button"
+                onClick={() => setShowPreview((value) => !value)}
+              >
+                {showPreview ? "미리보기 숨김" : "미리보기"}
+              </button>
+              <Link className="button-secondary-on-dark" href="/admin/questions">
+                문제 목록
+              </Link>
               <button
                 className="button-primary"
                 type="button"
@@ -292,180 +247,256 @@ export default function NewQuestionPage() {
               >
                 {isSaving ? "저장 중" : "저장"}
               </button>
+            </div>
+          </div>
+
+          {(notice || savedQuestionId || errorMessage) && (
+            <div className="flex flex-wrap gap-2 text-xs">
+              {notice ? (
+                <span className="rounded-sm border border-correct/40 bg-canvas-dark px-3 py-2 text-correct">
+                  {notice}
+                </span>
+              ) : null}
+              {savedQuestionId ? (
+                <span className="rounded-sm border border-hairline-on-dark bg-canvas-dark px-3 py-2 text-body-on-dark">
+                  문서 ID: <span className="font-semibold text-primary">{savedQuestionId}</span>
+                </span>
+              ) : null}
+              {errorMessage ? (
+                <span className="rounded-sm border border-incorrect bg-canvas-dark px-3 py-2 text-body-on-dark">
+                  {errorMessage}
+                </span>
+              ) : null}
+            </div>
+          )}
+        </div>
+      </header>
+
+      <section className="mx-auto max-w-page px-4 py-5 sm:px-6 lg:px-8">
+        <div className="grid gap-4 lg:grid-cols-[55fr_45fr]">
+          <section className="rounded-xl border border-hairline-on-dark bg-surface-card-dark p-4 sm:p-5">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold text-primary">01 문항 입력</p>
+              <label className="flex min-w-0 items-center gap-2 text-xs text-muted">
+                태그
+                <input
+                  className="h-9 w-32 rounded-md border border-hairline-on-dark bg-canvas-dark px-3 text-sm text-body-on-dark"
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  placeholder="optional"
+                />
+              </label>
+            </div>
+
+            <label className="mt-4 block">
+              <span className="sr-only">문항 본문</span>
+              <textarea
+                className="field-on-dark min-h-[360px] resize-y text-base leading-7"
+                value={activePrompt}
+                onChange={(event) => {
+                  if (questionType === "multiple_choice") {
+                    setMultiplePrompt(event.target.value);
+                    return;
+                  }
+
+                  setBinaryPrompt(event.target.value);
+                }}
+                placeholder={
+                  questionType === "multiple_choice"
+                    ? "다음 중 어법상 올바른 문장을 선택하세요."
+                    : "The bus {{choice}} at 7 a.m. every day."
+                }
+              />
+            </label>
+
+            {questionType === "binary_choice" ? (
+              <p className="mt-2 text-xs leading-5 text-muted">
+                선택지가 들어갈 위치에 {"{{choice}}"}를 넣으세요.
+              </p>
+            ) : null}
+          </section>
+
+          <section className="grid gap-4">
+            <div className="rounded-xl border border-hairline-on-dark bg-surface-card-dark p-4 sm:p-5">
+              <p className="text-sm font-semibold text-primary">
+                02 선택지 / 정답
+              </p>
+
+              {questionType === "multiple_choice" ? (
+                <MultipleChoiceEditor
+                  choices={multipleChoices}
+                  answer={multipleAnswer}
+                  onChoiceChange={updateMultipleChoice}
+                  onAnswerChange={setMultipleAnswer}
+                />
+              ) : (
+                <BinaryChoiceEditor
+                  prompt={binaryPrompt}
+                  choices={binaryChoices}
+                  answer={binaryAnswer}
+                  onChoiceChange={updateBinaryChoice}
+                  onAnswerChange={setBinaryAnswer}
+                />
+              )}
+
+              <label className="mt-5 block">
+                <span className="text-sm font-semibold text-body-on-dark">
+                  해설
+                </span>
+                <textarea
+                  className="field-on-dark mt-2 min-h-24 resize-y"
+                  value={explanation}
+                  onChange={(event) => setExplanation(event.target.value)}
+                  placeholder="학생에게 보여줄 해설을 입력하세요."
+                />
+              </label>
+            </div>
+
+            {showPreview ? (
+              <section className="rounded-xl border border-hairline-on-dark bg-surface-card-dark p-4">
+                <p className="text-sm font-semibold text-primary">
+                  학생 화면 미리보기
+                </p>
+                <StudentPreview
+                  questionType={questionType}
+                  multiplePrompt={multiplePrompt}
+                  multipleChoices={multipleChoices}
+                  multipleAnswer={multipleAnswer}
+                  binaryPrompt={binaryPrompt}
+                  binaryChoices={binaryChoices}
+                  binaryAnswer={binaryAnswer}
+                />
+              </section>
+            ) : null}
+
+            <details className="rounded-xl border border-hairline-on-dark bg-surface-card-dark p-4">
+              <summary className="cursor-pointer text-sm font-semibold text-muted">
+                JSON Preview
+              </summary>
+              <pre className="mt-4 max-h-72 overflow-auto rounded-lg border border-hairline-on-dark bg-canvas-dark p-4 text-xs leading-6 text-body-on-dark">
+                {jsonPreview}
+              </pre>
               <button
-                className="button-secondary-on-dark"
+                className="button-secondary-on-dark mt-3"
                 type="button"
                 onClick={handleCopyJson}
               >
                 JSON 복사
               </button>
-            </div>
-
-            {notice ? (
-              <p className="mt-4 rounded-lg border border-correct/40 bg-canvas-dark px-4 py-3 text-sm text-correct">
-                {notice}
-              </p>
-            ) : null}
-
-            {savedQuestionId ? (
-              <p className="mt-3 rounded-lg border border-hairline-on-dark bg-canvas-dark px-4 py-3 text-sm text-body-on-dark">
-                저장된 문서 ID: <span className="font-semibold text-primary">{savedQuestionId}</span>
-              </p>
-            ) : null}
-
-            {errorMessage ? (
-              <p className="mt-3 rounded-lg border border-incorrect bg-canvas-dark px-4 py-3 text-sm text-body-on-dark">
-                {errorMessage}
-              </p>
-            ) : null}
+            </details>
           </section>
-
-          <aside className="grid gap-5">
-            <section className="rounded-xl border border-hairline-on-dark bg-surface-card-dark p-5">
-              <p className="text-sm font-semibold text-primary">Preview</p>
-              <StudentPreview
-                questionType={questionType}
-                multiplePrompt={multiplePrompt}
-                multipleChoices={multipleChoices}
-                binaryPrompt={binaryPrompt}
-                binaryChoices={binaryChoices}
-              />
-            </section>
-
-            <section className="rounded-xl border border-hairline-on-dark bg-surface-card-dark p-5">
-              <p className="text-sm font-semibold text-primary">JSON Preview</p>
-              <pre className="mt-4 max-h-[420px] overflow-auto rounded-lg border border-hairline-on-dark bg-canvas-dark p-4 text-xs leading-6 text-body-on-dark">
-                {jsonPreview}
-              </pre>
-            </section>
-          </aside>
         </div>
       </section>
     </main>
   );
 }
 
-function MultipleChoiceFields({
-  prompt,
+function MultipleChoiceEditor({
   choices,
   answer,
-  onPromptChange,
   onChoiceChange,
   onAnswerChange,
 }: {
-  prompt: string;
   choices: string[];
   answer: number;
-  onPromptChange: (value: string) => void;
   onChoiceChange: (index: number, value: string) => void;
   onAnswerChange: (index: number) => void;
 }) {
   return (
-    <div className="grid gap-5">
-      <label className="block">
-        <span className="text-sm font-semibold text-body-on-dark">prompt</span>
-        <textarea
-          className="field-on-dark mt-2 min-h-28"
-          value={prompt}
-          onChange={(event) => onPromptChange(event.target.value)}
-        />
-      </label>
+    <div className="mt-4 grid gap-2">
+      {choices.map((choice, index) => {
+        const isAnswer = answer === index;
 
-      <div className="grid gap-3">
-        {choices.map((choice, index) => (
-          <label className="block" key={index}>
-            <span className="text-sm font-semibold text-body-on-dark">
-              choice {index + 1}
-            </span>
+        return (
+          <div
+            className={`grid grid-cols-[44px_1fr] gap-2 rounded-lg border p-2 ${
+              isAnswer
+                ? "border-primary bg-canvas-dark"
+                : "border-hairline-on-dark bg-canvas-dark"
+            }`}
+            key={index}
+          >
+            <button
+              className={`inline-flex h-10 items-center justify-center rounded-md border text-sm font-bold transition ${
+                isAnswer
+                  ? "border-primary bg-primary text-on-primary"
+                  : "border-hairline-on-dark bg-surface-card-dark text-muted hover:text-body-on-dark"
+              }`}
+              type="button"
+              onClick={() => onAnswerChange(index)}
+              aria-label={`${index + 1}번 정답 선택`}
+            >
+              {index + 1}
+            </button>
             <input
-              className="field-on-dark mt-2"
+              className="field-on-dark h-10 min-h-10"
               value={choice}
               onChange={(event) => onChoiceChange(index, event.target.value)}
+              placeholder={`choice ${index + 1}`}
             />
-          </label>
-        ))}
-      </div>
-
-      <AnswerSelect
-        count={choices.length}
-        value={answer}
-        onChange={onAnswerChange}
-      />
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function BinaryChoiceFields({
+function BinaryChoiceEditor({
   prompt,
   choices,
   answer,
-  onPromptChange,
   onChoiceChange,
   onAnswerChange,
 }: {
   prompt: string;
   choices: [string, string];
   answer: number;
-  onPromptChange: (value: string) => void;
   onChoiceChange: (index: number, value: string) => void;
   onAnswerChange: (index: number) => void;
 }) {
   return (
-    <div className="grid gap-5">
-      <label className="block">
-        <span className="text-sm font-semibold text-body-on-dark">prompt</span>
-        <textarea
-          className="field-on-dark mt-2 min-h-28"
-          value={prompt}
-          onChange={(event) => onPromptChange(event.target.value)}
-        />
-        <span className="mt-2 block text-xs leading-5 text-muted">
-          반드시 {"{{choice}}"} placeholder를 사용하세요. 예: The bus {"{{choice}}"} at 7 a.m. every day.
-        </span>
-      </label>
+    <div className="mt-4 grid gap-3">
+      {choices.map((choice, index) => {
+        const isAnswer = answer === index;
 
-      {choices.map((choice, index) => (
-        <label className="block" key={index}>
-          <span className="text-sm font-semibold text-body-on-dark">
-            choice {index === 0 ? "A" : "B"}
-          </span>
-          <input
-            className="field-on-dark mt-2"
-            value={choice}
-            onChange={(event) => onChoiceChange(index, event.target.value)}
-          />
-        </label>
-      ))}
+        return (
+          <div
+            className={`grid grid-cols-[44px_1fr] gap-2 rounded-lg border p-2 ${
+              isAnswer
+                ? "border-primary bg-canvas-dark"
+                : "border-hairline-on-dark bg-canvas-dark"
+            }`}
+            key={index}
+          >
+            <button
+              className={`inline-flex h-10 items-center justify-center rounded-md border text-sm font-bold transition ${
+                isAnswer
+                  ? "border-primary bg-primary text-on-primary"
+                  : "border-hairline-on-dark bg-surface-card-dark text-muted hover:text-body-on-dark"
+              }`}
+              type="button"
+              onClick={() => onAnswerChange(index)}
+              aria-label={`choice ${index === 0 ? "A" : "B"} 정답 선택`}
+            >
+              {index === 0 ? "A" : "B"}
+            </button>
+            <input
+              className="field-on-dark h-10 min-h-10"
+              value={choice}
+              onChange={(event) => onChoiceChange(index, event.target.value)}
+              placeholder={`choice ${index === 0 ? "A" : "B"}`}
+            />
+          </div>
+        );
+      })}
 
-      <AnswerSelect count={2} value={answer} onChange={onAnswerChange} />
+      <InlineBinaryPreview
+        prompt={prompt}
+        choices={choices}
+        answer={answer}
+        tone="dark"
+      />
     </div>
-  );
-}
-
-function AnswerSelect({
-  count,
-  value,
-  onChange,
-}: {
-  count: number;
-  value: number;
-  onChange: (index: number) => void;
-}) {
-  return (
-    <label className="block">
-      <span className="text-sm font-semibold text-body-on-dark">정답 선택</span>
-      <select
-        className="field-on-dark mt-2"
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-      >
-        {Array.from({ length: count }, (_, index) => (
-          <option key={index} value={index}>
-            {index + 1}번
-          </option>
-        ))}
-      </select>
-    </label>
   );
 }
 
@@ -473,55 +504,95 @@ function StudentPreview({
   questionType,
   multiplePrompt,
   multipleChoices,
+  multipleAnswer,
   binaryPrompt,
   binaryChoices,
+  binaryAnswer,
 }: {
   questionType: QuestionType;
   multiplePrompt: string;
   multipleChoices: string[];
+  multipleAnswer: number;
   binaryPrompt: string;
   binaryChoices: [string, string];
+  binaryAnswer: number;
 }) {
   if (questionType === "binary_choice") {
-    const [beforeChoice, afterChoice] = binaryPrompt.split("{{choice}}");
-
     return (
-      <div className="mt-4 rounded-lg border border-hairline-on-dark bg-canvas-dark p-4">
-        <p className="text-base leading-8 text-body-on-dark">
-          <span>{beforeChoice}</span>
-          <span className="inline-flex flex-wrap items-center gap-2">
-            <span>(</span>
-            {binaryChoices.map((choice, index) => (
-              <span className="inline-flex items-center gap-2" key={index}>
-                <span className="inline-flex min-h-8 items-center rounded-pill border border-hairline-on-dark px-3 text-sm font-semibold">
-                  {choice || `choice ${index + 1}`}
-                </span>
-                {index === 0 ? <span className="text-muted">/</span> : null}
-              </span>
-            ))}
-            <span>)</span>
-          </span>
-          <span>{afterChoice}</span>
-        </p>
+      <div className="mt-3 rounded-lg border border-hairline-on-dark bg-canvas-dark p-4">
+        <InlineBinaryPreview
+          prompt={binaryPrompt}
+          choices={binaryChoices}
+          answer={binaryAnswer}
+          tone="dark"
+        />
       </div>
     );
   }
 
   return (
-    <div className="mt-4 rounded-lg border border-hairline-on-dark bg-canvas-dark p-4">
-      <p className="text-base font-semibold leading-7 text-body-on-dark">
-        {multiplePrompt}
+    <div className="mt-3 rounded-lg border border-hairline-on-dark bg-canvas-dark p-4">
+      <p className="text-sm font-semibold leading-6 text-body-on-dark">
+        {multiplePrompt || "문항 본문"}
       </p>
-      <div className="mt-4 grid gap-2">
-        {multipleChoices.map((choice, index) => (
-          <div
-            className="rounded-md border border-hairline-on-dark px-3 py-2 text-sm text-body-on-dark"
-            key={index}
-          >
-            {choice || `choice ${index + 1}`}
-          </div>
-        ))}
+      <div className="mt-3 grid gap-2">
+        {multipleChoices.map((choice, index) => {
+          const isAnswer = multipleAnswer === index;
+
+          return (
+            <div
+              className={`rounded-md border px-3 py-2 text-sm ${
+                isAnswer
+                  ? "border-primary bg-primary/20 text-body-on-dark"
+                  : "border-hairline-on-dark text-muted"
+              }`}
+              key={index}
+            >
+              {choice || `choice ${index + 1}`}
+            </div>
+          );
+        })}
       </div>
     </div>
+  );
+}
+
+function InlineBinaryPreview({
+  prompt,
+  choices,
+  answer,
+}: {
+  prompt: string;
+  choices: [string, string];
+  answer: number;
+  tone: "dark";
+}) {
+  const [beforeChoice, afterChoice] = prompt.includes("{{choice}}")
+    ? prompt.split("{{choice}}")
+    : [prompt, ""];
+
+  return (
+    <p className="text-sm leading-8 text-body-on-dark">
+      <span>{beforeChoice || "문장 앞부분 "}</span>
+      <span className="inline-flex flex-wrap items-center gap-2">
+        <span className="text-muted">(</span>
+        {choices.map((choice, index) => (
+          <span className="inline-flex items-center gap-2" key={index}>
+            <span
+              className={`inline-flex min-h-8 items-center rounded-pill border px-3 text-sm font-semibold ${
+                answer === index
+                  ? "border-primary bg-primary text-on-primary"
+                  : "border-hairline-on-dark bg-surface-card-dark text-body-on-dark"
+              }`}
+            >
+              {choice || `choice ${index === 0 ? "A" : "B"}`}
+            </span>
+            {index === 0 ? <span className="text-muted">/</span> : null}
+          </span>
+        ))}
+        <span className="text-muted">)</span>
+      </span>
+      <span>{afterChoice}</span>
+    </p>
   );
 }
