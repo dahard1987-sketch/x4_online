@@ -5,12 +5,25 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged, signOut, type User } from "firebase/auth";
-import { collection, getDocs, orderBy, query } from "firebase/firestore";
+import { collection, getDocs, orderBy, query, where } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import type { Activity } from "@/types/activity";
+import type { Attempt } from "@/types/attempt";
 
 type DashboardActivity = Activity & {
   id: string;
+};
+
+type DashboardAttempt = Attempt & {
+  id: string;
+};
+
+type ActivityAttemptSummary = {
+  completed: boolean;
+  firstRoundScore: number;
+  bestScore: number;
+  totalFullRounds: number;
+  totalReviewRounds: number;
 };
 
 function getTodayDate() {
@@ -22,14 +35,27 @@ function getTodayDate() {
   return `${year}-${month}-${day}`;
 }
 
-function getStatusClassName() {
+function getStatusClassName(isCompleted: boolean) {
+  if (isCompleted) {
+    return "border-correct/40 bg-canvas-dark text-correct";
+  }
+
   return "border-hairline-on-dark bg-canvas-dark text-muted";
+}
+
+function getScoreClassName(score?: number) {
+  if (score === 100) {
+    return "bg-primary text-on-primary";
+  }
+
+  return "bg-surface-elevated-dark text-body-on-dark";
 }
 
 export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [activities, setActivities] = useState<DashboardActivity[]>([]);
+  const [attempts, setAttempts] = useState<DashboardAttempt[]>([]);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [isLoadingActivities, setIsLoadingActivities] = useState(true);
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -55,6 +81,35 @@ export default function DashboardPage() {
     };
   }, [activities, today]);
 
+  const attemptSummariesByActivityId = useMemo(() => {
+    return attempts.reduce<Record<string, ActivityAttemptSummary>>(
+      (summaries, attempt) => {
+        const previousSummary = summaries[attempt.activityId];
+
+        if (
+          !previousSummary ||
+          attempt.bestScore > previousSummary.bestScore
+        ) {
+          summaries[attempt.activityId] = {
+            completed: attempt.completed,
+            firstRoundScore: attempt.firstRoundScore,
+            bestScore: attempt.bestScore,
+            totalFullRounds: attempt.totalFullRounds,
+            totalReviewRounds: attempt.totalReviewRounds,
+          };
+          return summaries;
+        }
+
+        summaries[attempt.activityId] = {
+          ...previousSummary,
+          completed: previousSummary.completed || attempt.completed,
+        };
+        return summaries;
+      },
+      {},
+    );
+  }, [attempts]);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (!currentUser) {
@@ -74,35 +129,48 @@ export default function DashboardPage() {
       return;
     }
 
-    async function loadActivities() {
+    const currentUser = user;
+
+    async function loadDashboardData() {
       setIsLoadingActivities(true);
       setErrorMessage("");
 
       try {
-        const snapshot = await getDocs(
+        const activitiesSnapshot = await getDocs(
           query(collection(db, "activities"), orderBy("date", "asc")),
         );
+        const attemptsSnapshot = await getDocs(
+          query(
+            collection(db, "attempts"),
+            where("studentId", "==", currentUser.uid),
+          ),
+        );
 
-        const allActivities = snapshot.docs.map((activityDoc) => ({
+        const allActivities = activitiesSnapshot.docs.map((activityDoc) => ({
           id: activityDoc.id,
           ...(activityDoc.data() as Activity),
+        }));
+        const userAttempts = attemptsSnapshot.docs.map((attemptDoc) => ({
+          id: attemptDoc.id,
+          ...(attemptDoc.data() as Attempt),
         }));
 
         setActivities(
           allActivities.filter((activity) => activity.assignedTo === "all"),
         );
+        setAttempts(userAttempts);
       } catch (error) {
         setErrorMessage(
           error instanceof Error
-            ? `활동 목록을 불러오지 못했습니다: ${error.message}`
-            : "활동 목록을 불러오는 중 알 수 없는 오류가 발생했습니다.",
+            ? `대시보드 정보를 불러오지 못했습니다: ${error.message}`
+            : "대시보드 정보를 불러오는 중 알 수 없는 오류가 발생했습니다.",
         );
       } finally {
         setIsLoadingActivities(false);
       }
     }
 
-    loadActivities();
+    loadDashboardData();
   }, [user]);
 
   async function handleSignOut() {
@@ -195,17 +263,20 @@ export default function DashboardPage() {
               title="오늘 배정된 활동"
               emptyMessage="오늘 배정된 활동이 없습니다."
               activities={groupedActivities.todayActivities}
+              attemptSummariesByActivityId={attemptSummariesByActivityId}
             />
             {groupedActivities.upcomingActivities.length > 0 ? (
               <ActivitySection
                 title="예정된 활동"
                 activities={groupedActivities.upcomingActivities}
+                attemptSummariesByActivityId={attemptSummariesByActivityId}
               />
             ) : null}
             {groupedActivities.pastActivities.length > 0 ? (
               <ActivitySection
                 title="지난 활동"
                 activities={groupedActivities.pastActivities}
+                attemptSummariesByActivityId={attemptSummariesByActivityId}
               />
             ) : null}
           </div>
@@ -219,10 +290,12 @@ function ActivitySection({
   title,
   emptyMessage,
   activities,
+  attemptSummariesByActivityId,
 }: {
   title: string;
   emptyMessage?: string;
   activities: DashboardActivity[];
+  attemptSummariesByActivityId: Record<string, ActivityAttemptSummary>;
 }) {
   return (
     <section>
@@ -238,7 +311,11 @@ function ActivitySection({
       ) : (
         <div className="mt-4 grid gap-4 lg:grid-cols-3">
           {activities.map((activity) => (
-            <ActivityCard activity={activity} key={activity.id} />
+            <ActivityCard
+              activity={activity}
+              attemptSummary={attemptSummariesByActivityId[activity.id]}
+              key={activity.id}
+            />
           ))}
         </div>
       )}
@@ -246,7 +323,15 @@ function ActivitySection({
   );
 }
 
-function ActivityCard({ activity }: { activity: DashboardActivity }) {
+function ActivityCard({
+  activity,
+  attemptSummary,
+}: {
+  activity: DashboardActivity;
+  attemptSummary?: ActivityAttemptSummary;
+}) {
+  const isCompleted = Boolean(attemptSummary?.completed);
+
   return (
     <article className="rounded-xl border border-hairline-on-dark bg-surface-card-dark p-6">
       <div className="flex items-start justify-between gap-4">
@@ -257,9 +342,11 @@ function ActivityCard({ activity }: { activity: DashboardActivity }) {
           </h3>
         </div>
         <span
-          className={`rounded-sm border px-3 py-1.5 text-sm font-semibold ${getStatusClassName()}`}
+          className={`rounded-sm border px-3 py-1.5 text-sm font-semibold ${getStatusClassName(
+            isCompleted,
+          )}`}
         >
-          미시작
+          {isCompleted ? "완료" : "미시작"}
         </span>
       </div>
 
@@ -271,15 +358,38 @@ function ActivityCard({ activity }: { activity: DashboardActivity }) {
           </span>
         </div>
         <div>
-          <p className="text-sm text-muted">상태</p>
-          <span className="mt-3 inline-flex min-h-9 items-center rounded-md bg-surface-elevated-dark px-4 text-sm font-semibold text-body-on-dark">
-            미시작
+          <p className="text-sm text-muted">최고점</p>
+          <span
+            className={`mt-3 inline-flex min-h-9 items-center rounded-md px-4 text-sm font-semibold ${getScoreClassName(
+              attemptSummary?.bestScore,
+            )}`}
+          >
+            {attemptSummary ? `${attemptSummary.bestScore}점` : "-"}
           </span>
         </div>
+        {attemptSummary ? (
+          <>
+            <div>
+              <p className="text-sm text-muted">첫 점수</p>
+              <span className="mt-3 inline-flex min-h-9 items-center rounded-md bg-surface-elevated-dark px-4 text-sm font-semibold text-body-on-dark">
+                {attemptSummary.firstRoundScore}점
+              </span>
+            </div>
+            <div>
+              <p className="text-sm text-muted">전체/복습</p>
+              <span className="mt-3 inline-flex min-h-9 items-center rounded-md bg-surface-elevated-dark px-4 text-sm font-semibold text-body-on-dark">
+                {attemptSummary.totalFullRounds}/{attemptSummary.totalReviewRounds}
+              </span>
+            </div>
+          </>
+        ) : null}
       </div>
 
-      <Link className="button-primary mt-8 w-full" href={`/activity/${activity.id}`}>
-        시작하기
+      <Link
+        className={isCompleted ? "button-secondary-on-dark mt-8 w-full" : "button-primary mt-8 w-full"}
+        href={`/activity/${activity.id}`}
+      >
+        {isCompleted ? "다시 풀기" : "시작하기"}
       </Link>
     </article>
   );

@@ -1,7 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import type {
+  AttemptDetail,
+  AttemptRoundSummary,
+} from "@/types/attempt";
 
 export type ActivityRunnerQuestion = {
   id: string;
@@ -28,6 +32,32 @@ type RoundMode = "full" | "review";
 type RoundQuestionState = {
   roundQuestions: ActivityRunnerQuestion[];
   shuffledChoices: ShuffledChoice[];
+};
+
+type QuestionProgress = {
+  questionId: string;
+  attemptsInActivity: number;
+  firstAnsweredCorrect?: boolean;
+  finalAnsweredCorrect: boolean;
+  firstWrongFullRound?: number;
+  masteredAtFullRound?: number;
+};
+
+export type ActivityRunnerResult = {
+  activityTitle: string;
+  score: number;
+  finalScore: number;
+  firstRoundScore: number;
+  bestScore: number;
+  totalFullRounds: number;
+  totalReviewRounds: number;
+  totalAnsweredCount: number;
+  durationSec: number;
+  completed: boolean;
+  startedAt: Date;
+  finishedAt: Date;
+  details: AttemptDetail[];
+  roundSummaries: AttemptRoundSummary[];
 };
 
 function isSupportedQuestion(
@@ -106,13 +136,40 @@ function calculateScore(correctCount: number, totalCount: number) {
   return Math.round((correctCount / totalCount) * 100);
 }
 
+function buildAttemptDetails(
+  progressByQuestionId: Record<string, QuestionProgress>,
+): AttemptDetail[] {
+  return Object.values(progressByQuestionId).map((progress) => ({
+    questionId: progress.questionId,
+    attemptsInActivity: progress.attemptsInActivity,
+    firstAnsweredCorrect: Boolean(progress.firstAnsweredCorrect),
+    finalAnsweredCorrect: progress.finalAnsweredCorrect,
+    ...(progress.firstWrongFullRound
+      ? { firstWrongFullRound: progress.firstWrongFullRound }
+      : {}),
+    ...(progress.masteredAtFullRound
+      ? { masteredAtFullRound: progress.masteredAtFullRound }
+      : {}),
+  }));
+}
+
 export default function ActivityRunner({
   activityTitle,
   questions,
+  saveStatus,
+  savedAttemptId,
+  saveErrorMessage,
+  onComplete,
 }: {
   activityTitle: string;
   questions: ActivityRunnerQuestion[];
+  saveStatus?: "idle" | "saving" | "saved" | "error";
+  savedAttemptId?: string;
+  saveErrorMessage?: string;
+  onComplete?: (result: ActivityRunnerResult) => void;
 }) {
+  const startedAtRef = useRef(new Date());
+  const completionNotifiedRef = useRef(false);
   const [roundMode, setRoundMode] = useState<RoundMode>("full");
   const [fullRoundNumber, setFullRoundNumber] = useState(1);
   const [reviewRoundNumber, setReviewRoundNumber] = useState(0);
@@ -130,6 +187,12 @@ export default function ActivityRunner({
     ActivityRunnerQuestion[]
   >([]);
   const [fullRoundScores, setFullRoundScores] = useState<number[]>([]);
+  const [roundSummaries, setRoundSummaries] = useState<AttemptRoundSummary[]>(
+    [],
+  );
+  const [questionProgress, setQuestionProgress] = useState<
+    Record<string, QuestionProgress>
+  >({});
   const [totalAnsweredCount, setTotalAnsweredCount] = useState(0);
   const [isComplete, setIsComplete] = useState(false);
 
@@ -178,24 +241,47 @@ export default function ActivityRunner({
     const isCorrect = selectedAnswer === currentQuestion.answer;
 
     setTotalAnsweredCount((count) => count + 1);
+    setQuestionProgress((progressByQuestionId) => {
+      const previousProgress = progressByQuestionId[currentQuestion.id];
+      const attemptsInActivity =
+        (previousProgress?.attemptsInActivity ?? 0) + 1;
+
+      return {
+        ...progressByQuestionId,
+        [currentQuestion.id]: {
+          questionId: currentQuestion.id,
+          attemptsInActivity,
+          firstAnsweredCorrect:
+            previousProgress?.firstAnsweredCorrect ?? isCorrect,
+          finalAnsweredCorrect: isCorrect,
+          firstWrongFullRound:
+            previousProgress?.firstWrongFullRound ??
+            (roundMode === "full" && !isCorrect ? fullRoundNumber : undefined),
+          masteredAtFullRound:
+            previousProgress?.masteredAtFullRound ??
+            (roundMode === "full" && isCorrect ? fullRoundNumber : undefined),
+        },
+      };
+    });
     setFeedback({
       isCorrect,
       explanation: currentQuestion.explanation || "해설이 아직 없습니다.",
     });
 
+    if (isCorrect) {
+      setRoundCorrectCount((count) => count + 1);
+    }
+
     if (roundMode === "review") {
       return;
     }
 
-    if (isCorrect) {
-      setRoundCorrectCount((count) => count + 1);
-      return;
+    if (!isCorrect) {
+      setRoundWrongQuestions((questionsInRound) => [
+        ...questionsInRound,
+        currentQuestion,
+      ]);
     }
-
-    setRoundWrongQuestions((questionsInRound) => [
-      ...questionsInRound,
-      currentQuestion,
-    ]);
   }
 
   function moveToNextQuestion() {
@@ -217,6 +303,15 @@ export default function ActivityRunner({
     }
 
     if (roundMode === "review") {
+      const reviewSummary: AttemptRoundSummary = {
+        mode: "review",
+        roundNumber: reviewRoundNumber,
+        questionCount: roundQuestions.length,
+        correctCount: roundCorrectCount,
+        score: null,
+      };
+
+      setRoundSummaries((summaries) => [...summaries, reviewSummary]);
       setRoundMode("full");
       setFullRoundNumber((number) => number + 1);
       setRoundState(startFullRound(questions));
@@ -230,11 +325,45 @@ export default function ActivityRunner({
 
     const score = calculateScore(roundCorrectCount, roundQuestions.length);
     const nextScores = [...fullRoundScores, score];
+    const fullRoundSummary: AttemptRoundSummary = {
+      mode: "full",
+      roundNumber: fullRoundNumber,
+      questionCount: roundQuestions.length,
+      correctCount: roundCorrectCount,
+      score,
+    };
+    const nextRoundSummaries = [...roundSummaries, fullRoundSummary];
 
     setFullRoundScores(nextScores);
+    setRoundSummaries(nextRoundSummaries);
 
     if (score === 100) {
       setIsComplete(true);
+      if (!completionNotifiedRef.current) {
+        const finishedAt = new Date();
+        completionNotifiedRef.current = true;
+        onComplete?.({
+          activityTitle,
+          score,
+          finalScore: score,
+          firstRoundScore: nextScores[0] ?? score,
+          bestScore: Math.max(...nextScores),
+          totalFullRounds: nextScores.length,
+          totalReviewRounds: reviewRoundNumber,
+          totalAnsweredCount,
+          durationSec: Math.max(
+            0,
+            Math.round(
+              (finishedAt.getTime() - startedAtRef.current.getTime()) / 1000,
+            ),
+          ),
+          completed: true,
+          startedAt: startedAtRef.current,
+          finishedAt,
+          details: buildAttemptDetails(questionProgress),
+          roundSummaries: nextRoundSummaries,
+        });
+      }
       return;
     }
 
@@ -277,6 +406,36 @@ export default function ActivityRunner({
             <p className="mt-4 text-base leading-7 text-muted">
               모든 문항을 100점으로 마무리했습니다.
             </p>
+
+            {saveStatus ? (
+              <div className="mt-5 rounded-lg border border-hairline-on-light bg-surface-soft-light p-4 text-sm">
+                {saveStatus === "saving" ? (
+                  <p className="font-semibold text-primary">
+                    학습 결과를 저장하고 있습니다.
+                  </p>
+                ) : null}
+                {saveStatus === "saved" ? (
+                  <p className="font-semibold text-correct">
+                    학습 결과가 저장되었습니다.
+                  </p>
+                ) : null}
+                {saveStatus === "error" ? (
+                  <p className="font-semibold text-incorrect">
+                    학습 결과 저장에 실패했습니다.
+                  </p>
+                ) : null}
+                {savedAttemptId ? (
+                  <p className="mt-2 text-xs text-muted">
+                    attempt id: {savedAttemptId}
+                  </p>
+                ) : null}
+                {saveErrorMessage ? (
+                  <p className="mt-2 text-xs leading-5 text-body-on-light">
+                    {saveErrorMessage}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
             <dl className="mt-8 grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg border border-hairline-on-light bg-surface-soft-light p-5">

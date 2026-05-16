@@ -1,13 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import { doc, getDoc } from "firebase/firestore";
+import { useParams, useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { onAuthStateChanged, type User } from "firebase/auth";
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  serverTimestamp,
+  where,
+} from "firebase/firestore";
 import ActivityRunner, {
+  type ActivityRunnerResult,
   type ActivityRunnerQuestion,
 } from "@/components/ActivityRunner";
-import { db } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import type { Activity } from "@/types/activity";
 
 type LoadedActivity = Activity & {
@@ -33,14 +44,41 @@ function normalizeQuestion(
 
 export default function ActivityPage() {
   const params = useParams<{ activityId: string }>();
+  const router = useRouter();
   const activityId = params.activityId;
+  const hasSavedAttemptRef = useRef(false);
+  const [user, setUser] = useState<User | null>(null);
   const [activity, setActivity] = useState<LoadedActivity | null>(null);
   const [questions, setQuestions] = useState<ActivityRunnerQuestion[]>([]);
   const [missingQuestionIds, setMissingQuestionIds] = useState<string[]>([]);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [saveStatus, setSaveStatus] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const [savedAttemptId, setSavedAttemptId] = useState("");
+  const [saveErrorMessage, setSaveErrorMessage] = useState("");
 
   useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (!currentUser) {
+        router.replace("/login");
+        return;
+      }
+
+      setUser(currentUser);
+      setIsCheckingAuth(false);
+    });
+
+    return unsubscribe;
+  }, [router]);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
     async function loadActivity() {
       setIsLoading(true);
       setErrorMessage("");
@@ -109,12 +147,80 @@ export default function ActivityPage() {
     if (activityId) {
       loadActivity();
     }
-  }, [activityId]);
+  }, [activityId, user]);
 
-  if (isLoading) {
+  async function getNextAttemptNumber(currentUser: User) {
+    try {
+      const attemptsSnapshot = await getDocs(
+        query(
+          collection(db, "attempts"),
+          where("studentId", "==", currentUser.uid),
+        ),
+      );
+      const activityAttempts = attemptsSnapshot.docs.filter(
+        (attemptDoc) => attemptDoc.data().activityId === activityId,
+      );
+
+      return activityAttempts.length + 1;
+    } catch {
+      return 1;
+    }
+  }
+
+  async function handleComplete(result: ActivityRunnerResult) {
+    if (!user || !activity || hasSavedAttemptRef.current) {
+      return;
+    }
+
+    hasSavedAttemptRef.current = true;
+    setSaveStatus("saving");
+    setSaveErrorMessage("");
+
+    try {
+      const attemptNumber = await getNextAttemptNumber(user);
+      const docRef = await addDoc(collection(db, "attempts"), {
+        studentId: user.uid,
+        studentEmail: user.email,
+        activityId,
+        activityTitle: activity.title,
+        attemptNumber,
+        score: result.score,
+        finalScore: result.finalScore,
+        firstRoundScore: result.firstRoundScore,
+        bestScore: result.bestScore,
+        totalFullRounds: result.totalFullRounds,
+        totalReviewRounds: result.totalReviewRounds,
+        totalAnsweredCount: result.totalAnsweredCount,
+        durationSec: result.durationSec,
+        completed: result.completed,
+        startedAt: result.startedAt,
+        finishedAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+        details: result.details,
+        roundSummaries: result.roundSummaries,
+      });
+
+      setSavedAttemptId(docRef.id);
+      setSaveStatus("saved");
+    } catch (error) {
+      hasSavedAttemptRef.current = false;
+      setSaveStatus("error");
+      setSaveErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "학습 결과 저장 중 알 수 없는 오류가 발생했습니다.",
+      );
+    }
+  }
+
+  if (isCheckingAuth || isLoading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-canvas-light px-5 text-body-on-light">
-        <p className="text-sm text-muted">활동과 문항을 불러오고 있습니다.</p>
+        <p className="text-sm text-muted">
+          {isCheckingAuth
+            ? "로그인 상태를 확인하고 있습니다."
+            : "활동과 문항을 불러오고 있습니다."}
+        </p>
       </main>
     );
   }
@@ -172,7 +278,14 @@ export default function ActivityPage() {
           </div>
         </div>
       ) : null}
-      <ActivityRunner activityTitle={activity.title} questions={questions} />
+      <ActivityRunner
+        activityTitle={activity.title}
+        questions={questions}
+        saveStatus={saveStatus}
+        savedAttemptId={savedAttemptId}
+        saveErrorMessage={saveErrorMessage}
+        onComplete={handleComplete}
+      />
     </>
   );
 }
