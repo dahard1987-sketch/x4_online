@@ -239,6 +239,12 @@ export default function NewQuestionPage() {
               <Link className="button-secondary-on-dark" href="/admin/questions">
                 문제 목록
               </Link>
+              <Link
+                className="button-secondary-on-dark"
+                href="/admin/activities/new"
+              >
+                활동 만들기
+              </Link>
               <button
                 className="button-primary"
                 type="button"

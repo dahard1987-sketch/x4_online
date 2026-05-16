@@ -113,15 +113,24 @@ export default function DashboardPage() {
             className="h-9 w-auto"
           />
 
-          <div className="flex items-center justify-between gap-4 sm:justify-end">
+          <div className="flex flex-wrap items-center justify-between gap-3 sm:justify-end">
             <p className="text-sm font-semibold text-body-on-dark">
               {user?.displayName || "학생 이름"}
             </p>
-            <Link className="button-secondary-on-dark" href="/admin/questions/new">
+            <Link
+              className="button-secondary-on-dark"
+              href="/admin/questions/new"
+            >
               문항 만들기
             </Link>
             <Link className="button-secondary-on-dark" href="/admin/questions">
               문항 목록
+            </Link>
+            <Link
+              className="button-secondary-on-dark"
+              href="/admin/activities/new"
+            >
+              활동 만들기
             </Link>
             <button
               className="button-secondary-on-dark"

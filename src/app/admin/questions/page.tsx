@@ -59,6 +59,12 @@ export default function QuestionsPage() {
             <Link className="button-secondary-on-dark" href="/dashboard">
               대시보드로 돌아가기
             </Link>
+            <Link
+              className="button-secondary-on-dark"
+              href="/admin/activities/new"
+            >
+              활동 만들기
+            </Link>
             <Link className="button-primary" href="/admin/questions/new">
               새 문항 만들기
             </Link>
