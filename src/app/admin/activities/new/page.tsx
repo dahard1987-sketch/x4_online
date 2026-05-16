@@ -24,6 +24,8 @@ function getTypeLabel(type: string) {
   if (type === "binary_choice") return "이항대립";
   if (type === "word_arrangement") return "단어 배열";
   if (type === "sentence_construction") return "문장 완성";
+  if (type === "word_form") return "단어 변형";
+  if (type === "underline_judgment") return "밑줄 어법 판단";
   return type;
 }
 
@@ -374,6 +376,24 @@ export default function NewActivityPage() {
                                 ))}
                               </div>
                             </div>
+                          ) : question.type === "word_form" ? (
+                            <p className="mt-3 text-xs leading-6 text-body-on-dark">
+                              {question.sentence.replace("{{blank}}", "[___]")}{" "}
+                              <span className="font-semibold text-primary">
+                                ({question.baseWord})
+                              </span>
+                            </p>
+                          ) : question.type === "underline_judgment" ? (
+                            <p className="mt-3 text-xs leading-6 text-body-on-dark">
+                              {question.sentence
+                                .replace("{{ul}}", "【")
+                                .replace("{{/ul}}", "】")}{" "}
+                              <span
+                                className={`font-semibold ${question.isCorrect ? "text-correct" : "text-incorrect"}`}
+                              >
+                                {question.isCorrect ? "O" : "X"}
+                              </span>
+                            </p>
                           ) : (
                             <>
                               <ul className="mt-3 grid gap-2 sm:grid-cols-2">

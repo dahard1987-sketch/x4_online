@@ -81,6 +81,39 @@ function normalizeQuestion(
     };
   }
 
+  if (type === "word_form") {
+    return {
+      id,
+      type,
+      prompt,
+      explanation,
+      wordFormSentence: typeof data.sentence === "string" ? data.sentence : "",
+      wordFormBaseWord: typeof data.baseWord === "string" ? data.baseWord : "",
+      wordFormHint: typeof data.hint === "string" ? data.hint : undefined,
+      wordFormAnswer: typeof data.answer === "string" ? data.answer : "",
+      wordFormAcceptableAnswers: Array.isArray(data.acceptableAnswers)
+        ? (data.acceptableAnswers as unknown[]).filter(
+            (a): a is string => typeof a === "string",
+          )
+        : undefined,
+    };
+  }
+
+  if (type === "underline_judgment") {
+    return {
+      id,
+      type,
+      prompt,
+      explanation,
+      underlineSentence:
+        typeof data.sentence === "string" ? data.sentence : "",
+      underlineIsCorrect:
+        typeof data.isCorrect === "boolean" ? data.isCorrect : true,
+      underlineCorrection:
+        typeof data.correction === "string" ? data.correction : undefined,
+    };
+  }
+
   return {
     id,
     type,

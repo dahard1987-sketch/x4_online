@@ -5,7 +5,9 @@ type QuestionBase = {
     | "multiple_choice"
     | "binary_choice"
     | "word_arrangement"
-    | "sentence_construction";
+    | "sentence_construction"
+    | "word_form"
+    | "underline_judgment";
   prompt: string;
   explanation?: string;
   tags?: string[];
@@ -42,8 +44,26 @@ export type SentenceConstructionQuestion = QuestionBase & {
   acceptableAnswers?: string[];
 };
 
+export type WordFormQuestion = QuestionBase & {
+  type: "word_form";
+  sentence: string;
+  baseWord: string;
+  hint?: string;
+  answer: string;
+  acceptableAnswers?: string[];
+};
+
+export type UnderlineJudgmentQuestion = QuestionBase & {
+  type: "underline_judgment";
+  sentence: string;
+  isCorrect: boolean;
+  correction?: string;
+};
+
 export type Question =
   | MultipleChoiceQuestion
   | BinaryChoiceQuestion
   | WordArrangementQuestion
-  | SentenceConstructionQuestion;
+  | SentenceConstructionQuestion
+  | WordFormQuestion
+  | UnderlineJudgmentQuestion;

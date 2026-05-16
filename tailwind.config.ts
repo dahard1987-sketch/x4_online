@@ -47,7 +47,7 @@ const config: Config = {
         "body-md": ["15px", { lineHeight: "1.6", fontWeight: "400" }],
         "body-sm": ["13px", { lineHeight: "1.5", fontWeight: "400" }],
         button: ["14px", { lineHeight: "1", fontWeight: "600" }],
-        "question-body": ["22px", { lineHeight: "1.7", fontWeight: "500" }],
+        "question-body": ["36px", { lineHeight: "1.6", fontWeight: "500" }],
       },
       spacing: {
         xxs: "4px",

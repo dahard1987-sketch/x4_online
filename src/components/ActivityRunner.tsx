@@ -8,6 +8,8 @@ import type {
 } from "@/types/attempt";
 import { compareWordArrangementAnswer } from "@/lib/wordArrangement";
 import { compareSentenceConstructionAnswer } from "@/lib/sentenceConstruction";
+import { compareWordFormAnswer } from "@/lib/wordForm";
+import { compareUnderlineJudgmentAnswer } from "@/lib/underlineJudgment";
 
 export type ActivityRunnerQuestion = {
   id: string;
@@ -27,6 +29,16 @@ export type ActivityRunnerQuestion = {
   givenWords?: string[];
   sentenceAnswer?: string;
   scAcceptableAnswers?: string[];
+  // word_form
+  wordFormSentence?: string;
+  wordFormBaseWord?: string;
+  wordFormHint?: string;
+  wordFormAnswer?: string;
+  wordFormAcceptableAnswers?: string[];
+  // underline_judgment
+  underlineSentence?: string;
+  underlineIsCorrect?: boolean;
+  underlineCorrection?: string;
   // common
   explanation?: string;
 };
@@ -58,6 +70,19 @@ type SentenceConstructionRunnerQuestion = ActivityRunnerQuestion & {
   sentenceAnswer: string;
 };
 
+type WordFormRunnerQuestion = ActivityRunnerQuestion & {
+  type: "word_form";
+  wordFormSentence: string;
+  wordFormBaseWord: string;
+  wordFormAnswer: string;
+};
+
+type UnderlineJudgmentRunnerQuestion = ActivityRunnerQuestion & {
+  type: "underline_judgment";
+  underlineSentence: string;
+  underlineIsCorrect: boolean;
+};
+
 function isWordArrangementQuestion(
   question: ActivityRunnerQuestion,
 ): question is WordArrangementRunnerQuestion {
@@ -74,6 +99,27 @@ function isSentenceConstructionQuestion(
   return (
     question.type === "sentence_construction" &&
     typeof question.sentenceAnswer === "string"
+  );
+}
+
+function isWordFormQuestion(
+  question: ActivityRunnerQuestion,
+): question is WordFormRunnerQuestion {
+  return (
+    question.type === "word_form" &&
+    typeof question.wordFormSentence === "string" &&
+    typeof question.wordFormBaseWord === "string" &&
+    typeof question.wordFormAnswer === "string"
+  );
+}
+
+function isUnderlineJudgmentQuestion(
+  question: ActivityRunnerQuestion,
+): question is UnderlineJudgmentRunnerQuestion {
+  return (
+    question.type === "underline_judgment" &&
+    typeof question.underlineSentence === "string" &&
+    typeof question.underlineIsCorrect === "boolean"
   );
 }
 
@@ -268,6 +314,12 @@ export default function ActivityRunner({
   const [selectedWordTokens, setSelectedWordTokens] = useState<ShuffledWord[]>(
     [],
   );
+  const [wordFormInput, setWordFormInput] = useState("");
+  const [underlineSelected, setUnderlineSelected] = useState<boolean | null>(
+    null,
+  );
+  const [underlineCorrectionInput, setUnderlineCorrectionInput] =
+    useState("");
 
   const { roundQuestions, shuffledChoices, shuffledWords } = roundState;
   const currentQuestion = roundQuestions[questionIndex];
@@ -281,6 +333,14 @@ export default function ActivityRunner({
       : null;
   const sentenceConstructionCurrentQuestion =
     currentQuestion && isSentenceConstructionQuestion(currentQuestion)
+      ? currentQuestion
+      : null;
+  const wordFormCurrentQuestion =
+    currentQuestion && isWordFormQuestion(currentQuestion)
+      ? currentQuestion
+      : null;
+  const underlineCurrentQuestion =
+    currentQuestion && isUnderlineJudgmentQuestion(currentQuestion)
       ? currentQuestion
       : null;
   const progressPercent =
@@ -339,6 +399,36 @@ export default function ActivityRunner({
         currentQuestion.wordAnswer,
         currentQuestion.acceptableAnswers,
       );
+    } else if (isWordFormQuestion(currentQuestion)) {
+      if (wordFormInput.trim() === "") {
+        return;
+      }
+      isCorrect = compareWordFormAnswer(
+        wordFormInput,
+        currentQuestion.wordFormAnswer,
+        currentQuestion.wordFormAcceptableAnswers,
+      );
+      if (!isCorrect) {
+        correctAnswer = currentQuestion.wordFormAnswer;
+      }
+    } else if (isUnderlineJudgmentQuestion(currentQuestion)) {
+      if (underlineSelected === null) {
+        return;
+      }
+      if (!underlineSelected && underlineCorrectionInput.trim() === "") {
+        return;
+      }
+      isCorrect = compareUnderlineJudgmentAnswer(
+        underlineSelected,
+        underlineCorrectionInput,
+        currentQuestion.underlineIsCorrect,
+        currentQuestion.underlineCorrection,
+      );
+      if (!isCorrect) {
+        correctAnswer = currentQuestion.underlineIsCorrect
+          ? "O (어법상 올바름)"
+          : `X → ${currentQuestion.underlineCorrection ?? "?"}`;
+      }
     } else if (isSupportedQuestion(currentQuestion)) {
       if (selectedAnswer === null) {
         return;
@@ -412,6 +502,9 @@ export default function ActivityRunner({
       setSelectedAnswer(null);
       setSelectedWordTokens([]);
       setSentenceInput("");
+      setWordFormInput("");
+      setUnderlineSelected(null);
+      setUnderlineCorrectionInput("");
       setFeedback(null);
       return;
     }
@@ -433,6 +526,9 @@ export default function ActivityRunner({
       setSelectedAnswer(null);
       setSelectedWordTokens([]);
       setSentenceInput("");
+      setWordFormInput("");
+      setUnderlineSelected(null);
+      setUnderlineCorrectionInput("");
       setFeedback(null);
       setRoundCorrectCount(0);
       setRoundWrongQuestions([]);
@@ -490,6 +586,9 @@ export default function ActivityRunner({
     setSelectedAnswer(null);
     setSelectedWordTokens([]);
     setSentenceInput("");
+    setWordFormInput("");
+    setUnderlineSelected(null);
+    setUnderlineCorrectionInput("");
     setFeedback(null);
     setRoundCorrectCount(0);
     setRoundWrongQuestions([]);
@@ -653,6 +752,22 @@ export default function ActivityRunner({
                 }
                 onClearAll={() => setSelectedWordTokens([])}
               />
+            ) : wordFormCurrentQuestion ? (
+              <WordFormPrompt
+                question={wordFormCurrentQuestion}
+                wordFormInput={wordFormInput}
+                isDisabled={Boolean(feedback)}
+                onInputChange={setWordFormInput}
+              />
+            ) : underlineCurrentQuestion ? (
+              <UnderlineJudgmentPrompt
+                question={underlineCurrentQuestion}
+                underlineSelected={underlineSelected}
+                correctionInput={underlineCorrectionInput}
+                isDisabled={Boolean(feedback)}
+                onSelect={setUnderlineSelected}
+                onCorrectionChange={setUnderlineCorrectionInput}
+              />
             ) : !supportedCurrentQuestion ? (
               <UnsupportedQuestionMessage />
             ) : supportedCurrentQuestion.type === "multiple_choice" ? (
@@ -722,7 +837,13 @@ export default function ActivityRunner({
                     ? sentenceInput.trim() === ""
                     : wordArrangementCurrentQuestion
                       ? selectedWordTokens.length === 0
-                      : selectedAnswer === null || !supportedCurrentQuestion
+                      : wordFormCurrentQuestion
+                        ? wordFormInput.trim() === ""
+                        : underlineCurrentQuestion
+                          ? underlineSelected === null ||
+                            (!underlineSelected &&
+                              underlineCorrectionInput.trim() === "")
+                          : selectedAnswer === null || !supportedCurrentQuestion
                 }
               >
                 {isLastQuestion ? "답안 제출" : "제출"}
@@ -742,9 +863,132 @@ function UnsupportedQuestionMessage() {
         아직 지원하지 않는 문항 유형입니다.
       </p>
       <p className="mt-2 text-sm leading-6 text-body-on-light">
-        현재 객관식, 이항대립, 단어 배열, 문장 완성 문항을 지원합니다.
+        현재 객관식, 이항대립, 단어 배열, 문장 완성, 단어 변형, 밑줄 어법 판단
+        문항을 지원합니다.
       </p>
     </div>
+  );
+}
+
+function WordFormPrompt({
+  question,
+  wordFormInput,
+  isDisabled,
+  onInputChange,
+}: {
+  question: WordFormRunnerQuestion;
+  wordFormInput: string;
+  isDisabled: boolean;
+  onInputChange: (value: string) => void;
+}) {
+  const parts = question.wordFormSentence.split("{{blank}}");
+  const beforeBlank = parts[0] ?? "";
+  const afterBlank = parts[1] ?? "";
+
+  return (
+    <>
+      <p className="text-question-body text-body-on-light">{question.prompt}</p>
+      {question.wordFormHint ? (
+        <p className="mt-2 text-sm leading-6 text-muted">
+          {question.wordFormHint}
+        </p>
+      ) : null}
+
+      <div className="mt-8">
+        <p
+          className="flex flex-wrap items-center gap-x-3 text-body-on-light"
+          style={{ fontSize: "36px", lineHeight: "2.2", fontWeight: 500 }}
+        >
+          <span>{beforeBlank}</span>
+          <input
+            className="inline-block rounded-md border-2 border-primary/60 bg-surface-strong-light px-4 text-body-on-light placeholder:text-muted/50 focus:border-primary focus:outline-none disabled:opacity-60"
+            style={{
+              fontSize: "36px",
+              lineHeight: "1.6",
+              minWidth: "160px",
+              paddingTop: "4px",
+              paddingBottom: "4px",
+            }}
+            value={wordFormInput}
+            onChange={(event) => onInputChange(event.target.value)}
+            placeholder={question.wordFormBaseWord}
+            disabled={isDisabled}
+          />
+          <span style={{ fontWeight: 600, color: "var(--color-primary)" }}>
+            ({question.wordFormBaseWord})
+          </span>
+          <span>{afterBlank}</span>
+        </p>
+      </div>
+    </>
+  );
+}
+
+function UnderlineJudgmentPrompt({
+  question,
+  underlineSelected,
+  correctionInput,
+  isDisabled,
+  onSelect,
+  onCorrectionChange,
+}: {
+  question: UnderlineJudgmentRunnerQuestion;
+  underlineSelected: boolean | null;
+  correctionInput: string;
+  isDisabled: boolean;
+  onSelect: (value: boolean) => void;
+  onCorrectionChange: (value: string) => void;
+}) {
+  const parts = question.underlineSentence.split(/\{\{ul\}\}|\{\{\/ul\}\}/);
+  const beforeUnderline = parts[0] ?? "";
+  const underlinedText = parts[1] ?? "";
+  const afterUnderline = parts[2] ?? "";
+
+  return (
+    <>
+      <p className="text-question-body text-body-on-light">{question.prompt}</p>
+
+      <div className="mt-6">
+        <p className="text-base leading-9 text-body-on-light">
+          <span>{beforeUnderline}</span>
+          <span className="underline decoration-2">{underlinedText}</span>
+          <span>{afterUnderline}</span>
+        </p>
+      </div>
+
+      <div className="mt-6 flex gap-3">
+        {([true, false] as const).map((value) => (
+          <button
+            key={String(value)}
+            className={`min-h-12 min-w-20 rounded-md border px-6 text-lg font-bold transition ${
+              underlineSelected === value
+                ? "border-primary bg-primary text-on-primary"
+                : "border-hairline-on-light bg-canvas-light text-body-on-light hover:bg-surface-soft-light"
+            }`}
+            type="button"
+            onClick={() => onSelect(value)}
+            disabled={isDisabled}
+          >
+            {value ? "O" : "X"}
+          </button>
+        ))}
+      </div>
+
+      {underlineSelected === false ? (
+        <div className="mt-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+            올바른 표현
+          </p>
+          <input
+            className="mt-2 w-full rounded-lg border border-hairline-on-light bg-surface-strong-light p-3 text-sm text-body-on-light placeholder:text-muted focus:border-primary focus:outline-none disabled:opacity-60"
+            value={correctionInput}
+            onChange={(event) => onCorrectionChange(event.target.value)}
+            placeholder="올바른 표현을 입력하세요."
+            disabled={isDisabled}
+          />
+        </div>
+      ) : null}
+    </>
   );
 }
 

@@ -19,7 +19,9 @@ type QuestionType =
   | "multiple_choice"
   | "binary_choice"
   | "word_arrangement"
-  | "sentence_construction";
+  | "sentence_construction"
+  | "word_form"
+  | "underline_judgment";
 
 const multipleChoiceDefaults = {
   prompt: "다음 중 어법상 올바른 문장을 선택하세요.",
@@ -49,6 +51,21 @@ const sentenceConstructionDefaults = {
   koreanHint: "나는 어제 도서관에 갔다.",
   givenWordsRaw: "I / go / library / yesterday",
   answer: "I went to the library yesterday.",
+};
+
+const wordFormDefaults = {
+  prompt: "주어진 단어를 문맥에 맞게 알맞은 형태로 바꾸세요.",
+  sentence: "I {{blank}} to school yesterday.",
+  baseWord: "go",
+  hint: "과거형",
+  answer: "went",
+};
+
+const underlineJudgmentDefaults = {
+  prompt: "다음 문장에서 밑줄 친 부분의 어법이 올바른지 판단하세요.",
+  sentence: "He {{ul}}goed{{/ul}} to school yesterday.",
+  isCorrect: false,
+  correction: "went",
 };
 
 export default function NewQuestionPage() {
@@ -87,6 +104,22 @@ export default function NewQuestionPage() {
   );
   const [scAnswer, setScAnswer] = useState(sentenceConstructionDefaults.answer);
   const [scAcceptableAnswersRaw, setScAcceptableAnswersRaw] = useState("");
+  const [wfPrompt, setWfPrompt] = useState(wordFormDefaults.prompt);
+  const [wfSentence, setWfSentence] = useState(wordFormDefaults.sentence);
+  const [wfBaseWord, setWfBaseWord] = useState(wordFormDefaults.baseWord);
+  const [wfHint, setWfHint] = useState(wordFormDefaults.hint);
+  const [wfAnswer, setWfAnswer] = useState(wordFormDefaults.answer);
+  const [wfAcceptableAnswersRaw, setWfAcceptableAnswersRaw] = useState("");
+  const [ujPrompt, setUjPrompt] = useState(underlineJudgmentDefaults.prompt);
+  const [ujSentence, setUjSentence] = useState(
+    underlineJudgmentDefaults.sentence,
+  );
+  const [ujIsCorrect, setUjIsCorrect] = useState(
+    underlineJudgmentDefaults.isCorrect,
+  );
+  const [ujCorrection, setUjCorrection] = useState(
+    underlineJudgmentDefaults.correction,
+  );
   const [showPreview, setShowPreview] = useState(true);
   const [notice, setNotice] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -109,7 +142,11 @@ export default function NewQuestionPage() {
         ? binaryPrompt
         : questionType === "word_arrangement"
           ? wordPrompt
-          : scPrompt;
+          : questionType === "sentence_construction"
+            ? scPrompt
+            : questionType === "word_form"
+              ? wfPrompt
+              : ujPrompt;
 
   const questionJson: Question = useMemo(() => {
     const optionalFields = {
@@ -156,6 +193,35 @@ export default function NewQuestionPage() {
       };
     }
 
+    if (questionType === "word_form") {
+      const parsedAcceptable = parseAcceptableAnswers(wfAcceptableAnswersRaw);
+      return {
+        type: "word_form",
+        prompt: wfPrompt.trim(),
+        sentence: wfSentence.trim(),
+        baseWord: wfBaseWord.trim(),
+        ...(wfHint.trim() ? { hint: wfHint.trim() } : {}),
+        answer: wfAnswer.trim(),
+        ...(parsedAcceptable.length > 0
+          ? { acceptableAnswers: parsedAcceptable }
+          : {}),
+        ...optionalFields,
+      };
+    }
+
+    if (questionType === "underline_judgment") {
+      return {
+        type: "underline_judgment",
+        prompt: ujPrompt.trim(),
+        sentence: ujSentence.trim(),
+        isCorrect: ujIsCorrect,
+        ...(!ujIsCorrect && ujCorrection.trim()
+          ? { correction: ujCorrection.trim() }
+          : {}),
+        ...optionalFields,
+      };
+    }
+
     return {
       type: "word_arrangement",
       prompt: wordPrompt.trim(),
@@ -182,9 +248,19 @@ export default function NewQuestionPage() {
     scKoreanHint,
     scPrompt,
     title,
+    wfAcceptableAnswersRaw,
+    wfAnswer,
+    wfBaseWord,
+    wfHint,
+    wfPrompt,
+    wfSentence,
     wordHint,
     wordPrompt,
     wordTokenData,
+    ujPrompt,
+    ujSentence,
+    ujIsCorrect,
+    ujCorrection,
   ]);
 
   const jsonPreview = JSON.stringify(questionJson, null, 2);
@@ -221,6 +297,45 @@ export default function NewQuestionPage() {
 
       if (!question.answer.trim()) {
         return "정답 문장을 입력하세요.";
+      }
+
+      return "";
+    }
+
+    if (question.type === "word_form") {
+      if (!question.sentence.trim()) {
+        return "문장을 입력하세요.";
+      }
+
+      if (!question.sentence.includes("{{blank}}")) {
+        return "문장에 {{blank}}를 반드시 포함시켜야 합니다.";
+      }
+
+      if (!question.baseWord.trim()) {
+        return "원형 단어를 입력하세요.";
+      }
+
+      if (!question.answer.trim()) {
+        return "정답을 입력하세요.";
+      }
+
+      return "";
+    }
+
+    if (question.type === "underline_judgment") {
+      if (!question.sentence.trim()) {
+        return "문장을 입력하세요.";
+      }
+
+      if (
+        !question.sentence.includes("{{ul}}") ||
+        !question.sentence.includes("{{/ul}}")
+      ) {
+        return "문장에 {{ul}}...{{/ul}}로 밑줄 부분을 표시해야 합니다.";
+      }
+
+      if (!question.isCorrect && !question.correction?.trim()) {
+        return "어법이 틀린 경우 올바른 표현(correction)을 입력하세요.";
       }
 
       return "";
@@ -355,6 +470,8 @@ export default function NewQuestionPage() {
               <option value="binary_choice">이항대립</option>
               <option value="word_arrangement">단어 배열</option>
               <option value="sentence_construction">문장 완성</option>
+              <option value="word_form">단어 변형</option>
+              <option value="underline_judgment">밑줄 어법 판단</option>
             </select>
 
             <div className="min-w-0 flex-1 text-center text-sm font-semibold text-body-on-dark">
@@ -450,7 +567,15 @@ export default function NewQuestionPage() {
                     setWordPrompt(event.target.value);
                     return;
                   }
-                  setScPrompt(event.target.value);
+                  if (questionType === "sentence_construction") {
+                    setScPrompt(event.target.value);
+                    return;
+                  }
+                  if (questionType === "word_form") {
+                    setWfPrompt(event.target.value);
+                    return;
+                  }
+                  setUjPrompt(event.target.value);
                 }}
                 placeholder={
                   questionType === "multiple_choice"
@@ -459,7 +584,11 @@ export default function NewQuestionPage() {
                       ? "The bus {{choice}} at 7 a.m. every day."
                       : questionType === "word_arrangement"
                         ? "주어진 단어를 배열해 문장을 완성하세요."
-                        : "주어진 단어를 활용하고 필요한 표현을 추가해 문장을 완성하세요."
+                        : questionType === "sentence_construction"
+                          ? "주어진 단어를 활용하고 필요한 표현을 추가해 문장을 완성하세요."
+                          : questionType === "word_form"
+                            ? "주어진 단어를 문맥에 맞게 알맞은 형태로 바꾸세요."
+                            : "다음 문장에서 밑줄 친 부분의 어법이 올바른지 판단하세요."
                 }
               />
             </label>
@@ -480,6 +609,20 @@ export default function NewQuestionPage() {
             {questionType === "sentence_construction" ? (
               <p className="mt-2 text-xs leading-5 text-muted">
                 학생이 주어진 단어를 활용해 직접 문장을 완성하는 유형입니다.
+              </p>
+            ) : null}
+
+            {questionType === "word_form" ? (
+              <p className="mt-2 text-xs leading-5 text-muted">
+                빈칸 위치에 {"{{blank}}"}를 넣으세요. 예: I {"{{blank}}"} to
+                school yesterday.
+              </p>
+            ) : null}
+
+            {questionType === "underline_judgment" ? (
+              <p className="mt-2 text-xs leading-5 text-muted">
+                밑줄 부분을 {"{{ul}}"}...{"{{/ul}}"}로 감싸세요. 예: He{" "}
+                {"{{ul}}"}goed{"{{/ul}}"} to school yesterday.
               </p>
             ) : null}
           </section>
@@ -515,6 +658,28 @@ export default function NewQuestionPage() {
                   onGivenWordsRawChange={setScGivenWordsRaw}
                   onAnswerChange={setScAnswer}
                   onAcceptableAnswersRawChange={setScAcceptableAnswersRaw}
+                />
+              ) : questionType === "word_form" ? (
+                <WordFormEditor
+                  sentence={wfSentence}
+                  baseWord={wfBaseWord}
+                  hint={wfHint}
+                  answer={wfAnswer}
+                  acceptableAnswersRaw={wfAcceptableAnswersRaw}
+                  onSentenceChange={setWfSentence}
+                  onBaseWordChange={setWfBaseWord}
+                  onHintChange={setWfHint}
+                  onAnswerChange={setWfAnswer}
+                  onAcceptableAnswersRawChange={setWfAcceptableAnswersRaw}
+                />
+              ) : questionType === "underline_judgment" ? (
+                <UnderlineJudgmentEditor
+                  sentence={ujSentence}
+                  isCorrect={ujIsCorrect}
+                  correction={ujCorrection}
+                  onSentenceChange={setUjSentence}
+                  onIsCorrectChange={setUjIsCorrect}
+                  onCorrectionChange={setUjCorrection}
                 />
               ) : (
                 <WordArrangementEditor
@@ -575,6 +740,13 @@ export default function NewQuestionPage() {
                   scPrompt={scPrompt}
                   scKoreanHint={scKoreanHint}
                   scGivenWordsRaw={scGivenWordsRaw}
+                  wfPrompt={wfPrompt}
+                  wfSentence={wfSentence}
+                  wfBaseWord={wfBaseWord}
+                  wfHint={wfHint}
+                  ujPrompt={ujPrompt}
+                  ujSentence={ujSentence}
+                  ujIsCorrect={ujIsCorrect}
                 />
               </section>
             ) : null}
@@ -911,6 +1083,13 @@ function StudentPreview({
   scPrompt,
   scKoreanHint,
   scGivenWordsRaw,
+  wfPrompt,
+  wfSentence,
+  wfBaseWord,
+  wfHint,
+  ujPrompt,
+  ujSentence,
+  ujIsCorrect,
 }: {
   questionType: QuestionType;
   multiplePrompt: string;
@@ -925,6 +1104,13 @@ function StudentPreview({
   scPrompt: string;
   scKoreanHint: string;
   scGivenWordsRaw: string;
+  wfPrompt: string;
+  wfSentence: string;
+  wfBaseWord: string;
+  wfHint: string;
+  ujPrompt: string;
+  ujSentence: string;
+  ujIsCorrect: boolean;
 }) {
   if (questionType === "binary_choice") {
     return (
@@ -993,6 +1179,72 @@ function StudentPreview({
     );
   }
 
+  if (questionType === "word_form") {
+    const parts = wfSentence.split("{{blank}}");
+    const beforeBlank = parts[0] ?? "";
+    const afterBlank = parts[1] ?? "";
+
+    return (
+      <div className="mt-3 rounded-lg border border-hairline-on-dark bg-canvas-dark p-4">
+        <p className="text-sm font-semibold leading-6 text-body-on-dark">
+          {wfPrompt || "주어진 단어를 문맥에 맞게 알맞은 형태로 바꾸세요."}
+        </p>
+        {wfHint ? (
+          <p className="mt-2 text-sm leading-6 text-muted">{wfHint}</p>
+        ) : null}
+        <p className="mt-3 flex flex-wrap items-center gap-x-1 text-sm leading-8 text-body-on-dark">
+          <span>{beforeBlank}</span>
+          <span className="inline-flex min-h-8 items-center rounded-md border border-hairline-on-dark bg-surface-card-dark px-3 text-sm text-muted">
+            ___
+          </span>
+          <span className="font-semibold text-primary">({wfBaseWord || "원형"})</span>
+          <span>{afterBlank}</span>
+        </p>
+      </div>
+    );
+  }
+
+  if (questionType === "underline_judgment") {
+    const parts = ujSentence.split(/\{\{ul\}\}|\{\{\/ul\}\}/);
+    const before = parts[0] ?? "";
+    const underlined = parts[1] ?? "";
+    const after = parts[2] ?? "";
+
+    return (
+      <div className="mt-3 rounded-lg border border-hairline-on-dark bg-canvas-dark p-4">
+        <p className="text-sm font-semibold leading-6 text-body-on-dark">
+          {ujPrompt ||
+            "다음 문장에서 밑줄 친 부분의 어법이 올바른지 판단하세요."}
+        </p>
+        <p className="mt-3 text-sm leading-8 text-body-on-dark">
+          <span>{before}</span>
+          <span className="underline decoration-2">{underlined || "밑줄 부분"}</span>
+          <span>{after}</span>
+        </p>
+        <div className="mt-3 flex gap-2">
+          <span
+            className={`inline-flex min-h-8 items-center rounded-md border px-4 text-sm font-bold ${
+              ujIsCorrect
+                ? "border-primary bg-primary text-on-primary"
+                : "border-hairline-on-dark bg-surface-card-dark text-body-on-dark"
+            }`}
+          >
+            O
+          </span>
+          <span
+            className={`inline-flex min-h-8 items-center rounded-md border px-4 text-sm font-bold ${
+              !ujIsCorrect
+                ? "border-primary bg-primary text-on-primary"
+                : "border-hairline-on-dark bg-surface-card-dark text-body-on-dark"
+            }`}
+          >
+            X
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mt-3 rounded-lg border border-hairline-on-dark bg-canvas-dark p-4">
       <p className="text-sm font-semibold leading-6 text-body-on-dark">
@@ -1016,6 +1268,166 @@ function StudentPreview({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function WordFormEditor({
+  sentence,
+  baseWord,
+  hint,
+  answer,
+  acceptableAnswersRaw,
+  onSentenceChange,
+  onBaseWordChange,
+  onHintChange,
+  onAnswerChange,
+  onAcceptableAnswersRawChange,
+}: {
+  sentence: string;
+  baseWord: string;
+  hint: string;
+  answer: string;
+  acceptableAnswersRaw: string;
+  onSentenceChange: (value: string) => void;
+  onBaseWordChange: (value: string) => void;
+  onHintChange: (value: string) => void;
+  onAnswerChange: (value: string) => void;
+  onAcceptableAnswersRawChange: (value: string) => void;
+}) {
+  return (
+    <div className="mt-4 grid gap-4">
+      <label className="block">
+        <span className="text-sm font-semibold text-body-on-dark">문장</span>
+        <input
+          className="field-on-dark mt-2"
+          value={sentence}
+          onChange={(event) => onSentenceChange(event.target.value)}
+          placeholder="I {{blank}} to school yesterday."
+        />
+        <p className="mt-1.5 text-xs leading-5 text-muted">
+          빈칸 위치에 {"{{blank}}"}를 입력하세요.
+        </p>
+      </label>
+
+      <div className="grid grid-cols-2 gap-3">
+        <label className="block">
+          <span className="text-sm font-semibold text-body-on-dark">원형 단어</span>
+          <input
+            className="field-on-dark mt-2"
+            value={baseWord}
+            onChange={(event) => onBaseWordChange(event.target.value)}
+            placeholder="go"
+          />
+        </label>
+
+        <label className="block">
+          <span className="text-sm font-semibold text-body-on-dark">
+            힌트 <span className="font-normal text-muted">(optional)</span>
+          </span>
+          <input
+            className="field-on-dark mt-2"
+            value={hint}
+            onChange={(event) => onHintChange(event.target.value)}
+            placeholder="과거형"
+          />
+        </label>
+      </div>
+
+      <label className="block">
+        <span className="text-sm font-semibold text-body-on-dark">정답</span>
+        <input
+          className="field-on-dark mt-2"
+          value={answer}
+          onChange={(event) => onAnswerChange(event.target.value)}
+          placeholder="went"
+        />
+      </label>
+
+      <label className="block">
+        <span className="text-sm font-semibold text-body-on-dark">
+          허용 정답{" "}
+          <span className="font-normal text-muted">(optional)</span>
+        </span>
+        <textarea
+          className="field-on-dark mt-2 min-h-20 resize-y"
+          value={acceptableAnswersRaw}
+          onChange={(event) => onAcceptableAnswersRawChange(event.target.value)}
+          placeholder={"gone\nwent there"}
+        />
+        <p className="mt-1.5 text-xs leading-5 text-muted">
+          줄바꿈으로 구분합니다. 대소문자와 끝 문장부호는 자동으로 무시합니다.
+        </p>
+      </label>
+    </div>
+  );
+}
+
+function UnderlineJudgmentEditor({
+  sentence,
+  isCorrect,
+  correction,
+  onSentenceChange,
+  onIsCorrectChange,
+  onCorrectionChange,
+}: {
+  sentence: string;
+  isCorrect: boolean;
+  correction: string;
+  onSentenceChange: (value: string) => void;
+  onIsCorrectChange: (value: boolean) => void;
+  onCorrectionChange: (value: string) => void;
+}) {
+  return (
+    <div className="mt-4 grid gap-4">
+      <label className="block">
+        <span className="text-sm font-semibold text-body-on-dark">문장</span>
+        <input
+          className="field-on-dark mt-2"
+          value={sentence}
+          onChange={(event) => onSentenceChange(event.target.value)}
+          placeholder="He {{ul}}goed{{/ul}} to school yesterday."
+        />
+        <p className="mt-1.5 text-xs leading-5 text-muted">
+          밑줄 부분을 {"{{ul}}"}...{"{{/ul}}"}로 감싸세요.
+        </p>
+      </label>
+
+      <div>
+        <span className="text-sm font-semibold text-body-on-dark">
+          어법 판단
+        </span>
+        <div className="mt-2 flex gap-2">
+          {([true, false] as const).map((value) => (
+            <button
+              key={String(value)}
+              className={`inline-flex min-h-10 min-w-16 items-center justify-center rounded-md border text-sm font-bold transition ${
+                isCorrect === value
+                  ? "border-primary bg-primary text-on-primary"
+                  : "border-hairline-on-dark bg-canvas-dark text-muted hover:text-body-on-dark"
+              }`}
+              type="button"
+              onClick={() => onIsCorrectChange(value)}
+            >
+              {value ? "O (올바름)" : "X (틀림)"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {!isCorrect ? (
+        <label className="block">
+          <span className="text-sm font-semibold text-body-on-dark">
+            올바른 표현
+          </span>
+          <input
+            className="field-on-dark mt-2"
+            value={correction}
+            onChange={(event) => onCorrectionChange(event.target.value)}
+            placeholder="went"
+          />
+        </label>
+      ) : null}
     </div>
   );
 }

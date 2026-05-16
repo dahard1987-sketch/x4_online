@@ -16,6 +16,8 @@ function getTypeLabel(type: string) {
   if (type === "binary_choice") return "이항대립";
   if (type === "word_arrangement") return "단어 배열";
   if (type === "sentence_construction") return "문장 완성";
+  if (type === "word_form") return "단어 변형";
+  if (type === "underline_judgment") return "밑줄 어법 판단";
   return type;
 }
 
@@ -175,6 +177,62 @@ export default function QuestionsPage() {
                   <p className="mt-3 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-semibold text-body-on-dark">
                     {question.answer}
                   </p>
+                </div>
+              ) : question.type === "word_form" ? (
+                <div className="mt-4">
+                  {question.hint ? (
+                    <p className="mb-3 text-sm leading-6 text-muted">
+                      {question.hint}
+                    </p>
+                  ) : null}
+                  <p className="text-sm leading-7 text-body-on-dark">
+                    {question.sentence.replace("{{blank}}", "[___]")}{" "}
+                    <span className="font-semibold text-primary">
+                      ({question.baseWord})
+                    </span>
+                  </p>
+                  <p className="mt-3 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-semibold text-body-on-dark">
+                    {question.answer}
+                  </p>
+                </div>
+              ) : question.type === "underline_judgment" ? (
+                <div className="mt-4">
+                  {(() => {
+                    const parts = question.sentence.split(
+                      /\{\{ul\}\}|\{\{\/ul\}\}/,
+                    );
+                    const before = parts[0] ?? "";
+                    const underlined = parts[1] ?? "";
+                    const after = parts[2] ?? "";
+                    return (
+                      <p className="text-sm leading-7 text-body-on-dark">
+                        {before}
+                        <span className="underline decoration-2">
+                          {underlined}
+                        </span>
+                        {after}
+                      </p>
+                    );
+                  })()}
+                  <div className="mt-3 flex items-center gap-3">
+                    <span
+                      className={`rounded-md border px-3 py-1.5 text-sm font-bold ${
+                        question.isCorrect
+                          ? "border-correct/40 bg-correct/10 text-correct"
+                          : "border-incorrect/40 bg-incorrect/10 text-incorrect"
+                      }`}
+                    >
+                      {question.isCorrect ? "O" : "X"}
+                    </span>
+                    {!question.isCorrect && question.correction ? (
+                      <p className="text-sm text-muted">
+                        →{" "}
+                        <span className="font-semibold text-body-on-dark">
+                          {question.correction}
+                        </span>
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
               ) : (
                 <ul className="mt-4 grid gap-2 sm:grid-cols-2">
