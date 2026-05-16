@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, signOut, type User } from "firebase/auth";
@@ -14,6 +15,7 @@ type Activity = {
   statusLabel: string;
   bestScore: number | null;
   actionLabel: string;
+  href?: string;
 };
 
 const mockActivities: Activity[] = [
@@ -23,6 +25,7 @@ const mockActivities: Activity[] = [
     statusLabel: "미시작",
     bestScore: null,
     actionLabel: "시작하기",
+    href: "/activity/mock-grammar-01",
   },
   {
     title: "X4 문법 훈련 02",
@@ -114,6 +117,12 @@ export default function DashboardPage() {
             <p className="text-sm font-semibold text-body-on-dark">
               {user?.displayName || "학생 이름"}
             </p>
+            <Link className="button-secondary-on-dark" href="/admin/questions/new">
+              문항 만들기
+            </Link>
+            <Link className="button-secondary-on-dark" href="/admin/questions">
+              문항 목록
+            </Link>
             <button
               className="button-secondary-on-dark"
               type="button"
@@ -169,16 +178,25 @@ export default function DashboardPage() {
                 </span>
               </div>
 
-              <button
-                className={
-                  activity.status === "completed"
-                    ? "mt-8 inline-flex min-h-10 w-full items-center justify-center rounded-md border border-correct/40 bg-canvas-dark px-6 text-sm font-semibold text-correct transition hover:bg-surface-elevated-dark"
-                    : "button-primary mt-8 w-full"
-                }
-                type="button"
-              >
-                {activity.actionLabel}
-              </button>
+              {activity.href ? (
+                <Link
+                  className="button-primary mt-8 w-full"
+                  href={activity.href}
+                >
+                  {activity.actionLabel}
+                </Link>
+              ) : (
+                <button
+                  className={
+                    activity.status === "completed"
+                      ? "mt-8 inline-flex min-h-10 w-full items-center justify-center rounded-md border border-correct/40 bg-canvas-dark px-6 text-sm font-semibold text-correct transition hover:bg-surface-elevated-dark"
+                      : "button-primary mt-8 w-full"
+                  }
+                  type="button"
+                >
+                  {activity.actionLabel}
+                </button>
+              )}
             </article>
           ))}
         </div>
