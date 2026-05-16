@@ -11,6 +11,14 @@ type QuestionListItem = Question & {
   id: string;
 };
 
+function getTypeLabel(type: string) {
+  if (type === "multiple_choice") return "객관식";
+  if (type === "binary_choice") return "이항대립";
+  if (type === "word_arrangement") return "단어 배열";
+  if (type === "sentence_construction") return "문장 완성";
+  return type;
+}
+
 export default function QuestionsPage() {
   const [questions, setQuestions] = useState<QuestionListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -47,14 +55,16 @@ export default function QuestionsPage() {
     <main className="min-h-screen bg-canvas-dark text-body-on-dark">
       <header className="border-b border-hairline-on-dark bg-canvas-dark">
         <nav className="mx-auto flex min-h-16 max-w-page flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
-          <Image
-            src="/canb-logo.png"
-            alt="CANB English"
-            width={1109}
-            height={544}
-            priority
-            className="h-9 w-auto"
-          />
+          <Link href="/dashboard">
+            <Image
+              src="/canb-logo.png"
+              alt="CANB English"
+              width={1109}
+              height={544}
+              priority
+              className="h-9 w-auto"
+            />
+          </Link>
           <div className="flex flex-col gap-3 sm:flex-row">
             <Link className="button-secondary-on-dark" href="/dashboard">
               대시보드로 돌아가기
@@ -111,56 +121,82 @@ export default function QuestionsPage() {
               className="rounded-xl border border-hairline-on-dark bg-surface-card-dark p-5 sm:p-6"
               key={question.id}
             >
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-primary">
-                    {question.type}
-                  </p>
-                  <h2 className="mt-3 text-xl font-semibold leading-snug text-body-on-dark">
-                    {question.prompt}
-                  </h2>
-                </div>
-                <span className="rounded-sm border border-hairline-on-dark bg-canvas-dark px-3 py-1.5 text-sm text-muted">
-                  {question.id}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-sm border border-primary/40 px-2 py-1 text-xs font-semibold text-primary">
+                  {getTypeLabel(question.type)}
+                </span>
+                <span className="font-mono text-xs text-muted">
+                  {question.id.slice(0, 8)}…
                 </span>
               </div>
 
-              <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_120px]">
-                <div>
-                  <p className="text-sm font-semibold text-body-on-dark">
-                    choices
-                  </p>
-                  <ul className="mt-3 grid gap-2">
-                    {question.choices.map((choice, index) => (
-                      <li
-                        className="rounded-md border border-hairline-on-dark bg-canvas-dark px-3 py-2 text-sm text-body-on-dark"
-                        key={`${question.id}-${index}`}
-                      >
-                        {index}. {choice}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+              <h2 className="mt-3 text-base font-semibold leading-snug text-body-on-dark">
+                {question.prompt}
+              </h2>
 
-                <div>
-                  <p className="text-sm font-semibold text-body-on-dark">
-                    answer
+              {question.type === "word_arrangement" ? (
+                <div className="mt-4">
+                  {question.hint ? (
+                    <p className="mb-3 text-sm leading-6 text-muted">
+                      {question.hint}
+                    </p>
+                  ) : null}
+                  <div className="flex flex-wrap gap-1.5">
+                    {question.words.map((word, index) => (
+                      <span
+                        className="rounded-pill border border-hairline-on-dark px-2 py-1 text-xs text-body-on-dark"
+                        key={`${question.id}-word-${index}`}
+                      >
+                        {word}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="mt-3 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-semibold text-body-on-dark">
+                    {question.answer.join(" ")}
                   </p>
-                  <p className="mt-3 inline-flex min-h-9 items-center rounded-md bg-primary px-4 text-sm font-semibold text-on-primary">
+                </div>
+              ) : question.type === "sentence_construction" ? (
+                <div className="mt-4">
+                  {question.koreanHint ? (
+                    <p className="mb-3 text-sm leading-6 text-muted">
+                      {question.koreanHint}
+                    </p>
+                  ) : null}
+                  <div className="flex flex-wrap gap-1.5">
+                    {question.givenWords.map((word, index) => (
+                      <span
+                        className="rounded-pill border border-hairline-on-dark px-2 py-1 text-xs text-body-on-dark"
+                        key={`${question.id}-gw-${index}`}
+                      >
+                        {word}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="mt-3 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-semibold text-body-on-dark">
                     {question.answer}
                   </p>
                 </div>
-              </div>
+              ) : (
+                <ul className="mt-4 grid gap-2 sm:grid-cols-2">
+                  {question.choices.map((choice, index) => (
+                    <li
+                      className={`rounded-md border px-3 py-2 text-sm ${
+                        question.answer === index
+                          ? "border-primary bg-primary/15 font-semibold text-body-on-dark"
+                          : "border-hairline-on-dark text-muted"
+                      }`}
+                      key={`${question.id}-${index}`}
+                    >
+                      {choice}
+                    </li>
+                  ))}
+                </ul>
+              )}
 
               {question.explanation ? (
-                <div className="mt-6 border-t border-hairline-on-dark pt-5">
-                  <p className="text-sm font-semibold text-body-on-dark">
-                    explanation
-                  </p>
-                  <p className="mt-2 text-sm leading-6 text-muted">
-                    {question.explanation}
-                  </p>
-                </div>
+                <p className="mt-4 border-t border-hairline-on-dark pt-4 text-sm leading-6 text-muted">
+                  {question.explanation}
+                </p>
               ) : null}
             </article>
           ))}

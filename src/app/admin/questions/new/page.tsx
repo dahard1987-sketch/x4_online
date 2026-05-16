@@ -5,9 +5,21 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import {
+  buildWordArrangementTokens,
+  tokenizeSentenceForWordArrangement,
+} from "@/lib/wordArrangement";
+import {
+  parseAcceptableAnswers,
+  parseGivenWords,
+} from "@/lib/sentenceConstruction";
 import type { Question } from "@/types/question";
 
-type QuestionType = "multiple_choice" | "binary_choice";
+type QuestionType =
+  | "multiple_choice"
+  | "binary_choice"
+  | "word_arrangement"
+  | "sentence_construction";
 
 const multipleChoiceDefaults = {
   prompt: "다음 중 어법상 올바른 문장을 선택하세요.",
@@ -24,6 +36,19 @@ const binaryChoiceDefaults = {
   prompt: "The bus {{choice}} at 7 a.m. every day.",
   choices: ["start", "starts"] as [string, string],
   answer: 1,
+};
+
+const wordArrangementDefaults = {
+  prompt: "주어진 단어를 배열해 문장을 완성하세요.",
+  hint: "John은 서울에 갈 수 없다.",
+  answerSentence: "John can't go to Seoul.",
+};
+
+const sentenceConstructionDefaults = {
+  prompt: "주어진 단어를 활용하고 필요한 표현을 추가해 문장을 완성하세요.",
+  koreanHint: "나는 어제 도서관에 갔다.",
+  givenWordsRaw: "I / go / library / yesterday",
+  answer: "I went to the library yesterday.",
 };
 
 export default function NewQuestionPage() {
@@ -47,14 +72,44 @@ export default function NewQuestionPage() {
     binaryChoiceDefaults.choices,
   );
   const [binaryAnswer, setBinaryAnswer] = useState(binaryChoiceDefaults.answer);
+  const [wordPrompt, setWordPrompt] = useState(wordArrangementDefaults.prompt);
+  const [wordHint, setWordHint] = useState(wordArrangementDefaults.hint);
+  const [wordAnswerSentence, setWordAnswerSentence] = useState(
+    wordArrangementDefaults.answerSentence,
+  );
+  const [properNounIndices, setProperNounIndices] = useState<number[]>([0, 4]);
+  const [scPrompt, setScPrompt] = useState(sentenceConstructionDefaults.prompt);
+  const [scKoreanHint, setScKoreanHint] = useState(
+    sentenceConstructionDefaults.koreanHint,
+  );
+  const [scGivenWordsRaw, setScGivenWordsRaw] = useState(
+    sentenceConstructionDefaults.givenWordsRaw,
+  );
+  const [scAnswer, setScAnswer] = useState(sentenceConstructionDefaults.answer);
+  const [scAcceptableAnswersRaw, setScAcceptableAnswersRaw] = useState("");
   const [showPreview, setShowPreview] = useState(true);
   const [notice, setNotice] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [savedQuestionId, setSavedQuestionId] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
+  const wordTokens = useMemo(
+    () => tokenizeSentenceForWordArrangement(wordAnswerSentence),
+    [wordAnswerSentence],
+  );
+  const wordTokenData = useMemo(
+    () => buildWordArrangementTokens(wordAnswerSentence, properNounIndices),
+    [properNounIndices, wordAnswerSentence],
+  );
+
   const activePrompt =
-    questionType === "multiple_choice" ? multiplePrompt : binaryPrompt;
+    questionType === "multiple_choice"
+      ? multiplePrompt
+      : questionType === "binary_choice"
+        ? binaryPrompt
+        : questionType === "word_arrangement"
+          ? wordPrompt
+          : scPrompt;
 
   const questionJson: Question = useMemo(() => {
     const optionalFields = {
@@ -72,14 +127,44 @@ export default function NewQuestionPage() {
       };
     }
 
+    if (questionType === "binary_choice") {
+      return {
+        type: "binary_choice",
+        prompt: binaryPrompt.trim(),
+        choices: binaryChoices.map((choice) => choice.trim()) as [
+          string,
+          string,
+        ],
+        answer: binaryAnswer as 0 | 1,
+        ...optionalFields,
+      };
+    }
+
+    if (questionType === "sentence_construction") {
+      const parsedWords = parseGivenWords(scGivenWordsRaw);
+      const parsedAcceptable = parseAcceptableAnswers(scAcceptableAnswersRaw);
+      return {
+        type: "sentence_construction",
+        prompt: scPrompt.trim(),
+        koreanHint: scKoreanHint.trim(),
+        givenWords: parsedWords,
+        answer: scAnswer.trim(),
+        ...(parsedAcceptable.length > 0
+          ? { acceptableAnswers: parsedAcceptable }
+          : {}),
+        ...optionalFields,
+      };
+    }
+
     return {
-      type: "binary_choice",
-      prompt: binaryPrompt.trim(),
-      choices: binaryChoices.map((choice) => choice.trim()) as [
-        string,
-        string,
-      ],
-      answer: binaryAnswer as 0 | 1,
+      type: "word_arrangement",
+      prompt: wordPrompt.trim(),
+      ...(wordHint.trim() ? { hint: wordHint.trim() } : {}),
+      words: wordTokenData.words,
+      answer: wordTokenData.answer,
+      ...(wordTokenData.properNounIndices.length > 0
+        ? { properNounIndices: wordTokenData.properNounIndices }
+        : {}),
       ...optionalFields,
     };
   }, [
@@ -91,7 +176,15 @@ export default function NewQuestionPage() {
     multipleChoices,
     multiplePrompt,
     questionType,
+    scAcceptableAnswersRaw,
+    scAnswer,
+    scGivenWordsRaw,
+    scKoreanHint,
+    scPrompt,
     title,
+    wordHint,
+    wordPrompt,
+    wordTokenData,
   ]);
 
   const jsonPreview = JSON.stringify(questionJson, null, 2);
@@ -99,6 +192,57 @@ export default function NewQuestionPage() {
   function validateQuestion(question: Question) {
     if (!question.prompt) {
       return "문항 본문을 입력하세요.";
+    }
+
+    if (question.type === "word_arrangement") {
+      if (!wordAnswerSentence.trim()) {
+        return "정답 문장을 입력하세요.";
+      }
+
+      if (question.answer.length < 2) {
+        return "단어 배열 문항은 정답 토큰이 2개 이상 필요합니다.";
+      }
+
+      if (question.words.length < 2) {
+        return "단어 배열 문항은 문제용 단어가 2개 이상 필요합니다.";
+      }
+
+      return "";
+    }
+
+    if (question.type === "sentence_construction") {
+      if (!question.koreanHint.trim()) {
+        return "한국어 힌트를 입력하세요.";
+      }
+
+      if (question.givenWords.length === 0) {
+        return "주어진 단어를 1개 이상 입력하세요.";
+      }
+
+      if (!question.answer.trim()) {
+        return "정답 문장을 입력하세요.";
+      }
+
+      return "";
+    }
+
+    if (question.type === "binary_choice") {
+      if (!question.prompt.includes("{{choice}}")) {
+        return "이항대립 문항 본문에는 반드시 {{choice}}가 포함되어야 합니다.";
+      }
+
+      if (
+        question.choices.length !== 2 ||
+        question.choices.some((choice) => !choice)
+      ) {
+        return "이항대립은 choice A와 choice B가 모두 필요합니다.";
+      }
+
+      if (question.answer !== 0 && question.answer !== 1) {
+        return "이항대립 정답 번호가 유효하지 않습니다.";
+      }
+
+      return "";
     }
 
     if (question.type === "multiple_choice") {
@@ -114,21 +258,6 @@ export default function NewQuestionPage() {
       }
 
       return "";
-    }
-
-    if (!question.prompt.includes("{{choice}}")) {
-      return "이항대립 문항 본문에는 반드시 {{choice}}가 포함되어야 합니다.";
-    }
-
-    if (
-      question.choices.length !== 2 ||
-      question.choices.some((choice) => !choice)
-    ) {
-      return "이항대립은 choice A와 choice B가 모두 필요합니다.";
-    }
-
-    if (question.answer !== 0 && question.answer !== 1) {
-      return "이항대립 정답 번호가 유효하지 않습니다.";
     }
 
     return "";
@@ -196,14 +325,16 @@ export default function NewQuestionPage() {
         <div className="mx-auto flex max-w-page flex-col gap-3 px-4 py-3 sm:px-6 lg:px-8">
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex min-w-0 items-center gap-3">
-              <Image
-                src="/canb-logo.png"
-                alt="CANB English"
-                width={1109}
-                height={544}
-                priority
-                className="h-8 w-auto"
-              />
+              <Link href="/dashboard">
+                <Image
+                  src="/canb-logo.png"
+                  alt="CANB English"
+                  width={1109}
+                  height={544}
+                  priority
+                  className="h-8 w-auto"
+                />
+              </Link>
               <span className="hidden text-sm font-semibold text-muted sm:inline">
                 CANB Admin
               </span>
@@ -222,6 +353,8 @@ export default function NewQuestionPage() {
             >
               <option value="multiple_choice">객관식</option>
               <option value="binary_choice">이항대립</option>
+              <option value="word_arrangement">단어 배열</option>
+              <option value="sentence_construction">문장 완성</option>
             </select>
 
             <div className="min-w-0 flex-1 text-center text-sm font-semibold text-body-on-dark">
@@ -265,7 +398,10 @@ export default function NewQuestionPage() {
               ) : null}
               {savedQuestionId ? (
                 <span className="rounded-sm border border-hairline-on-dark bg-canvas-dark px-3 py-2 text-body-on-dark">
-                  문서 ID: <span className="font-semibold text-primary">{savedQuestionId}</span>
+                  문서 ID:{" "}
+                  <span className="font-semibold text-primary">
+                    {savedQuestionId}
+                  </span>
                 </span>
               ) : null}
               {errorMessage ? (
@@ -297,20 +433,33 @@ export default function NewQuestionPage() {
             <label className="mt-4 block">
               <span className="sr-only">문항 본문</span>
               <textarea
-                className="field-on-dark min-h-[360px] resize-y text-base leading-7"
+                className={`field-on-dark resize-y text-base leading-7 ${
+                  questionType === "multiple_choice" ? "min-h-44" : "min-h-20"
+                }`}
                 value={activePrompt}
                 onChange={(event) => {
                   if (questionType === "multiple_choice") {
                     setMultiplePrompt(event.target.value);
                     return;
                   }
-
-                  setBinaryPrompt(event.target.value);
+                  if (questionType === "binary_choice") {
+                    setBinaryPrompt(event.target.value);
+                    return;
+                  }
+                  if (questionType === "word_arrangement") {
+                    setWordPrompt(event.target.value);
+                    return;
+                  }
+                  setScPrompt(event.target.value);
                 }}
                 placeholder={
                   questionType === "multiple_choice"
                     ? "다음 중 어법상 올바른 문장을 선택하세요."
-                    : "The bus {{choice}} at 7 a.m. every day."
+                    : questionType === "binary_choice"
+                      ? "The bus {{choice}} at 7 a.m. every day."
+                      : questionType === "word_arrangement"
+                        ? "주어진 단어를 배열해 문장을 완성하세요."
+                        : "주어진 단어를 활용하고 필요한 표현을 추가해 문장을 완성하세요."
                 }
               />
             </label>
@@ -318,6 +467,19 @@ export default function NewQuestionPage() {
             {questionType === "binary_choice" ? (
               <p className="mt-2 text-xs leading-5 text-muted">
                 선택지가 들어갈 위치에 {"{{choice}}"}를 넣으세요.
+              </p>
+            ) : null}
+
+            {questionType === "word_arrangement" ? (
+              <p className="mt-2 text-xs leading-5 text-muted">
+                정답 문장을 입력하면 단어 토큰과 문제용 word bank가 자동으로
+                생성됩니다.
+              </p>
+            ) : null}
+
+            {questionType === "sentence_construction" ? (
+              <p className="mt-2 text-xs leading-5 text-muted">
+                학생이 주어진 단어를 활용해 직접 문장을 완성하는 유형입니다.
               </p>
             ) : null}
           </section>
@@ -335,13 +497,49 @@ export default function NewQuestionPage() {
                   onChoiceChange={updateMultipleChoice}
                   onAnswerChange={setMultipleAnswer}
                 />
-              ) : (
+              ) : questionType === "binary_choice" ? (
                 <BinaryChoiceEditor
                   prompt={binaryPrompt}
                   choices={binaryChoices}
                   answer={binaryAnswer}
                   onChoiceChange={updateBinaryChoice}
                   onAnswerChange={setBinaryAnswer}
+                />
+              ) : questionType === "sentence_construction" ? (
+                <SentenceConstructionEditor
+                  koreanHint={scKoreanHint}
+                  givenWordsRaw={scGivenWordsRaw}
+                  answer={scAnswer}
+                  acceptableAnswersRaw={scAcceptableAnswersRaw}
+                  onKoreanHintChange={setScKoreanHint}
+                  onGivenWordsRawChange={setScGivenWordsRaw}
+                  onAnswerChange={setScAnswer}
+                  onAcceptableAnswersRawChange={setScAcceptableAnswersRaw}
+                />
+              ) : (
+                <WordArrangementEditor
+                  hint={wordHint}
+                  answerSentence={wordAnswerSentence}
+                  rawTokens={wordTokens}
+                  words={wordTokenData.words}
+                  properNounIndices={properNounIndices}
+                  onHintChange={setWordHint}
+                  onAnswerSentenceChange={(value) => {
+                    setWordAnswerSentence(value);
+                    setProperNounIndices((indices) => {
+                      const nextTokenCount =
+                        tokenizeSentenceForWordArrangement(value).length;
+
+                      return indices.filter((index) => index < nextTokenCount);
+                    });
+                  }}
+                  onToggleProperNoun={(index) =>
+                    setProperNounIndices((indices) =>
+                      indices.includes(index)
+                        ? indices.filter((item) => item !== index)
+                        : [...indices, index].sort((a, b) => a - b),
+                    )
+                  }
                 />
               )}
 
@@ -371,6 +569,12 @@ export default function NewQuestionPage() {
                   binaryPrompt={binaryPrompt}
                   binaryChoices={binaryChoices}
                   binaryAnswer={binaryAnswer}
+                  wordPrompt={wordPrompt}
+                  wordHint={wordHint}
+                  wordWords={wordTokenData.words}
+                  scPrompt={scPrompt}
+                  scKoreanHint={scKoreanHint}
+                  scGivenWordsRaw={scGivenWordsRaw}
                 />
               </section>
             ) : null}
@@ -506,6 +710,193 @@ function BinaryChoiceEditor({
   );
 }
 
+function WordArrangementEditor({
+  hint,
+  answerSentence,
+  rawTokens,
+  words,
+  properNounIndices,
+  onHintChange,
+  onAnswerSentenceChange,
+  onToggleProperNoun,
+}: {
+  hint: string;
+  answerSentence: string;
+  rawTokens: string[];
+  words: string[];
+  properNounIndices: number[];
+  onHintChange: (value: string) => void;
+  onAnswerSentenceChange: (value: string) => void;
+  onToggleProperNoun: (index: number) => void;
+}) {
+  return (
+    <div className="mt-4 grid gap-4">
+      <label className="block">
+        <span className="text-sm font-semibold text-body-on-dark">
+          한국어 힌트
+        </span>
+        <textarea
+          className="field-on-dark mt-2 min-h-20 resize-y"
+          value={hint}
+          onChange={(event) => onHintChange(event.target.value)}
+          placeholder="그는 서울에 갈 수 없다."
+        />
+      </label>
+
+      <label className="block">
+        <span className="text-sm font-semibold text-body-on-dark">
+          정답 문장
+        </span>
+        <input
+          className="field-on-dark mt-2"
+          value={answerSentence}
+          onChange={(event) => onAnswerSentenceChange(event.target.value)}
+          placeholder="John can't go to Seoul."
+        />
+      </label>
+
+      <div className="rounded-lg border border-hairline-on-dark bg-canvas-dark p-3">
+        <p className="text-xs font-semibold text-muted">Token Preview</p>
+        <div className="mt-3 grid gap-2">
+          {rawTokens.length === 0 ? (
+            <p className="text-sm text-muted">정답 문장을 입력하세요.</p>
+          ) : null}
+          {rawTokens.map((token, index) => {
+            const isProperNoun = properNounIndices.includes(index);
+
+            return (
+              <label
+                className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-hairline-on-dark bg-surface-card-dark px-3 py-2"
+                key={`${token}-${index}`}
+              >
+                <span className="inline-flex min-h-8 items-center rounded-pill border border-primary/40 px-3 text-sm font-semibold text-body-on-dark">
+                  {token}
+                </span>
+                <span className="flex items-center gap-2 text-xs text-muted">
+                  <input
+                    className="h-4 w-4 accent-primary"
+                    type="checkbox"
+                    checked={isProperNoun}
+                    onChange={() => onToggleProperNoun(index)}
+                  />
+                  고유명사
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-hairline-on-dark bg-canvas-dark p-3">
+        <p className="text-xs font-semibold text-muted">Word Bank Preview</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {words.map((word, index) => (
+            <span
+              className="inline-flex min-h-8 items-center rounded-pill border border-hairline-on-dark bg-surface-card-dark px-3 text-sm font-semibold text-body-on-dark"
+              key={`${word}-${index}`}
+            >
+              {word}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SentenceConstructionEditor({
+  koreanHint,
+  givenWordsRaw,
+  answer,
+  acceptableAnswersRaw,
+  onKoreanHintChange,
+  onGivenWordsRawChange,
+  onAnswerChange,
+  onAcceptableAnswersRawChange,
+}: {
+  koreanHint: string;
+  givenWordsRaw: string;
+  answer: string;
+  acceptableAnswersRaw: string;
+  onKoreanHintChange: (value: string) => void;
+  onGivenWordsRawChange: (value: string) => void;
+  onAnswerChange: (value: string) => void;
+  onAcceptableAnswersRawChange: (value: string) => void;
+}) {
+  const parsedWords = parseGivenWords(givenWordsRaw);
+
+  return (
+    <div className="mt-4 grid gap-4">
+      <label className="block">
+        <span className="text-sm font-semibold text-body-on-dark">
+          한국어 힌트
+        </span>
+        <textarea
+          className="field-on-dark mt-2 min-h-20 resize-y"
+          value={koreanHint}
+          onChange={(event) => onKoreanHintChange(event.target.value)}
+          placeholder="나는 어제 도서관에 갔다."
+        />
+      </label>
+
+      <div>
+        <label className="block">
+          <span className="text-sm font-semibold text-body-on-dark">
+            주어진 단어
+          </span>
+          <input
+            className="field-on-dark mt-2"
+            value={givenWordsRaw}
+            onChange={(event) => onGivenWordsRawChange(event.target.value)}
+            placeholder="I / go / library / yesterday"
+          />
+        </label>
+        <p className="mt-1.5 text-xs leading-5 text-muted">
+          슬래시(/), 쉼표(,), 줄바꿈으로 구분합니다.
+        </p>
+        {parsedWords.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {parsedWords.map((word, index) => (
+              <span
+                className="inline-flex min-h-7 items-center rounded-pill border border-hairline-on-dark bg-canvas-dark px-2.5 text-xs font-semibold text-body-on-dark"
+                key={`${word}-${index}`}
+              >
+                {word}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <label className="block">
+        <span className="text-sm font-semibold text-body-on-dark">정답</span>
+        <input
+          className="field-on-dark mt-2"
+          value={answer}
+          onChange={(event) => onAnswerChange(event.target.value)}
+          placeholder="I went to the library yesterday."
+        />
+      </label>
+
+      <label className="block">
+        <span className="text-sm font-semibold text-body-on-dark">
+          허용 정답{" "}
+          <span className="font-normal text-muted">(optional)</span>
+        </span>
+        <textarea
+          className="field-on-dark mt-2 min-h-20 resize-y"
+          value={acceptableAnswersRaw}
+          onChange={(event) => onAcceptableAnswersRawChange(event.target.value)}
+          placeholder={"Yesterday I went to the library.\nI went to the library."}
+        />
+        <p className="mt-1.5 text-xs leading-5 text-muted">
+          줄바꿈으로 구분합니다. 대소문자와 끝 문장부호는 자동으로 무시합니다.
+        </p>
+      </label>
+    </div>
+  );
+}
+
 function StudentPreview({
   questionType,
   multiplePrompt,
@@ -514,6 +905,12 @@ function StudentPreview({
   binaryPrompt,
   binaryChoices,
   binaryAnswer,
+  wordPrompt,
+  wordHint,
+  wordWords,
+  scPrompt,
+  scKoreanHint,
+  scGivenWordsRaw,
 }: {
   questionType: QuestionType;
   multiplePrompt: string;
@@ -522,6 +919,12 @@ function StudentPreview({
   binaryPrompt: string;
   binaryChoices: [string, string];
   binaryAnswer: number;
+  wordPrompt: string;
+  wordHint: string;
+  wordWords: string[];
+  scPrompt: string;
+  scKoreanHint: string;
+  scGivenWordsRaw: string;
 }) {
   if (questionType === "binary_choice") {
     return (
@@ -532,6 +935,60 @@ function StudentPreview({
           answer={binaryAnswer}
           tone="dark"
         />
+      </div>
+    );
+  }
+
+  if (questionType === "word_arrangement") {
+    return (
+      <div className="mt-3 rounded-lg border border-hairline-on-dark bg-canvas-dark p-4">
+        <p className="text-sm font-semibold leading-6 text-body-on-dark">
+          {wordPrompt || "주어진 단어를 배열해 문장을 완성하세요."}
+        </p>
+        {wordHint ? (
+          <p className="mt-2 text-sm leading-6 text-muted">{wordHint}</p>
+        ) : null}
+        <div className="mt-3 flex flex-wrap gap-2">
+          {wordWords.map((word, index) => (
+            <span
+              className="inline-flex min-h-9 items-center rounded-pill border border-hairline-on-dark px-3 text-sm font-semibold text-body-on-dark"
+              key={`${word}-${index}`}
+            >
+              {word}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (questionType === "sentence_construction") {
+    const parsedWords = parseGivenWords(scGivenWordsRaw);
+
+    return (
+      <div className="mt-3 rounded-lg border border-hairline-on-dark bg-canvas-dark p-4">
+        <p className="text-sm font-semibold leading-6 text-body-on-dark">
+          {scPrompt ||
+            "주어진 단어를 활용하고 필요한 표현을 추가해 문장을 완성하세요."}
+        </p>
+        {scKoreanHint ? (
+          <p className="mt-2 text-sm leading-6 text-muted">{scKoreanHint}</p>
+        ) : null}
+        {parsedWords.length > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {parsedWords.map((word, index) => (
+              <span
+                className="inline-flex min-h-8 items-center rounded-pill border border-hairline-on-dark bg-surface-card-dark px-3 text-sm font-semibold text-body-on-dark"
+                key={`${word}-${index}`}
+              >
+                {word}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        <div className="mt-3 min-h-12 rounded-lg border border-hairline-on-dark bg-surface-card-dark p-3">
+          <p className="text-sm text-muted">영어 문장을 입력하세요.</p>
+        </div>
       </div>
     );
   }

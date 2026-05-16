@@ -65,14 +65,16 @@ export default function ActivitiesPage() {
       <header className="border-b border-hairline-on-dark bg-canvas-dark">
         <nav className="mx-auto flex min-h-16 max-w-page flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
-            <Image
-              src="/canb-logo.png"
-              alt="CANB English"
-              width={1109}
-              height={544}
-              priority
-              className="h-9 w-auto"
-            />
+            <Link href="/dashboard">
+              <Image
+                src="/canb-logo.png"
+                alt="CANB English"
+                width={1109}
+                height={544}
+                priority
+                className="h-9 w-auto"
+              />
+            </Link>
             <span className="text-sm font-semibold text-muted">CANB Admin</span>
           </div>
 

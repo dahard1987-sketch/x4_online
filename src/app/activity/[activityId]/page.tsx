@@ -29,16 +29,69 @@ function normalizeQuestion(
   id: string,
   data: Record<string, unknown>,
 ): ActivityRunnerQuestion {
+  const type = typeof data.type === "string" ? data.type : "unsupported";
+  const prompt = typeof data.prompt === "string" ? data.prompt : "";
+  const explanation =
+    typeof data.explanation === "string" ? data.explanation : undefined;
+
+  if (type === "word_arrangement") {
+    return {
+      id,
+      type,
+      prompt,
+      explanation,
+      hint: typeof data.hint === "string" ? data.hint : undefined,
+      words: Array.isArray(data.words)
+        ? data.words.filter((w): w is string => typeof w === "string")
+        : [],
+      wordAnswer: Array.isArray(data.answer)
+        ? data.answer.filter((a): a is string => typeof a === "string")
+        : [],
+      acceptableAnswers: Array.isArray(data.acceptableAnswers)
+        ? (data.acceptableAnswers as unknown[]).map((row) =>
+            Array.isArray(row)
+              ? row.filter((a): a is string => typeof a === "string")
+              : [],
+          )
+        : undefined,
+      properNounIndices: Array.isArray(data.properNounIndices)
+        ? data.properNounIndices.filter(
+            (i): i is number => typeof i === "number",
+          )
+        : undefined,
+    };
+  }
+
+  if (type === "sentence_construction") {
+    return {
+      id,
+      type,
+      prompt,
+      explanation,
+      koreanHint: typeof data.koreanHint === "string" ? data.koreanHint : "",
+      givenWords: Array.isArray(data.givenWords)
+        ? data.givenWords.filter((w): w is string => typeof w === "string")
+        : [],
+      sentenceAnswer: typeof data.answer === "string" ? data.answer : "",
+      scAcceptableAnswers: Array.isArray(data.acceptableAnswers)
+        ? (data.acceptableAnswers as unknown[]).filter(
+            (a): a is string => typeof a === "string",
+          )
+        : undefined,
+    };
+  }
+
   return {
     id,
-    type: typeof data.type === "string" ? data.type : "unsupported",
-    prompt: typeof data.prompt === "string" ? data.prompt : "",
+    type,
+    prompt,
+    explanation,
     choices: Array.isArray(data.choices)
-      ? data.choices.filter((choice): choice is string => typeof choice === "string")
+      ? data.choices.filter(
+          (choice): choice is string => typeof choice === "string",
+        )
       : undefined,
     answer: typeof data.answer === "number" ? data.answer : undefined,
-    explanation:
-      typeof data.explanation === "string" ? data.explanation : undefined,
   };
 }
 

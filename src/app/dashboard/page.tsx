@@ -35,19 +35,30 @@ function getTodayDate() {
   return `${year}-${month}-${day}`;
 }
 
-function getStatusClassName(isCompleted: boolean) {
-  if (isCompleted) {
-    return "border-correct/40 bg-canvas-dark text-correct";
-  }
+type ActivityStatus = "not_started" | "in_progress" | "completed";
 
+function getActivityStatus(summary?: ActivityAttemptSummary): ActivityStatus {
+  if (!summary) return "not_started";
+  if (summary.completed) return "completed";
+  return "in_progress";
+}
+
+function getStatusBadgeClass(status: ActivityStatus) {
+  if (status === "completed")
+    return "border-correct/40 bg-canvas-dark text-correct";
+  if (status === "in_progress")
+    return "border-primary/40 bg-canvas-dark text-primary";
   return "border-hairline-on-dark bg-canvas-dark text-muted";
 }
 
-function getScoreClassName(score?: number) {
-  if (score === 100) {
-    return "bg-primary text-on-primary";
-  }
+function getStatusLabel(status: ActivityStatus) {
+  if (status === "completed") return "완료";
+  if (status === "in_progress") return "진행중";
+  return "미시작";
+}
 
+function getScoreClassName(score?: number) {
+  if (score === 100) return "bg-primary text-on-primary";
   return "bg-surface-elevated-dark text-body-on-dark";
 }
 
@@ -194,37 +205,19 @@ export default function DashboardPage() {
           aria-label="학생 홈"
           className="mx-auto flex min-h-16 max-w-page flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8"
         >
-          <Image
-            src="/canb-logo.png"
-            alt="CANB English"
-            width={1109}
-            height={544}
-            priority
-            className="h-9 w-auto"
-          />
+          <Link href="/dashboard">
+            <Image
+              src="/canb-logo.png"
+              alt="CANB English"
+              width={1109}
+              height={544}
+              priority
+              className="h-9 w-auto"
+            />
+          </Link>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 sm:justify-end">
-            <p className="text-sm font-semibold text-body-on-dark">
-              {user?.displayName || "학생 이름"}
-            </p>
-            <Link
-              className="button-secondary-on-dark"
-              href="/admin/questions/new"
-            >
-              문항 만들기
-            </Link>
-            <Link className="button-secondary-on-dark" href="/admin/questions">
-              문항 목록
-            </Link>
-            <Link
-              className="button-secondary-on-dark"
-              href="/admin/activities/new"
-            >
-              활동 만들기
-            </Link>
-            <Link className="button-secondary-on-dark" href="/admin/attempts">
-              학습 결과
-            </Link>
+          <div className="flex items-center gap-4">
+            <p className="hidden text-sm text-muted sm:block">{user?.email}</p>
             <button
               className="button-secondary-on-dark"
               type="button"
@@ -285,6 +278,38 @@ export default function DashboardPage() {
           </div>
         ) : null}
       </section>
+
+      <section className="mx-auto max-w-page border-t border-hairline-on-dark px-5 py-8 sm:px-6 lg:px-8">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+          관리자 도구
+        </p>
+        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2">
+          <Link
+            className="text-sm text-muted hover:text-body-on-dark"
+            href="/admin/questions/new"
+          >
+            문항 만들기
+          </Link>
+          <Link
+            className="text-sm text-muted hover:text-body-on-dark"
+            href="/admin/questions"
+          >
+            문항 목록
+          </Link>
+          <Link
+            className="text-sm text-muted hover:text-body-on-dark"
+            href="/admin/activities/new"
+          >
+            활동 만들기
+          </Link>
+          <Link
+            className="text-sm text-muted hover:text-body-on-dark"
+            href="/admin/attempts"
+          >
+            학습 결과
+          </Link>
+        </div>
+      </section>
     </main>
   );
 }
@@ -333,7 +358,8 @@ function ActivityCard({
   activity: DashboardActivity;
   attemptSummary?: ActivityAttemptSummary;
 }) {
-  const isCompleted = Boolean(attemptSummary?.completed);
+  const status = getActivityStatus(attemptSummary);
+  const isCompleted = status === "completed";
 
   return (
     <article className="rounded-xl border border-hairline-on-dark bg-surface-card-dark p-6">
@@ -345,11 +371,9 @@ function ActivityCard({
           </h3>
         </div>
         <span
-          className={`rounded-sm border px-3 py-1.5 text-sm font-semibold ${getStatusClassName(
-            isCompleted,
-          )}`}
+          className={`shrink-0 rounded-sm border px-3 py-1.5 text-sm font-semibold ${getStatusBadgeClass(status)}`}
         >
-          {isCompleted ? "완료" : "미시작"}
+          {getStatusLabel(status)}
         </span>
       </div>
 
@@ -367,7 +391,7 @@ function ActivityCard({
               attemptSummary?.bestScore,
             )}`}
           >
-            {attemptSummary ? `${attemptSummary.bestScore}점` : "-"}
+            {attemptSummary ? `${attemptSummary.bestScore}점` : "—"}
           </span>
         </div>
         {attemptSummary ? (
@@ -379,9 +403,9 @@ function ActivityCard({
               </span>
             </div>
             <div>
-              <p className="text-sm text-muted">전체/복습</p>
+              <p className="text-sm text-muted">전체 / 복습</p>
               <span className="mt-3 inline-flex min-h-9 items-center rounded-md bg-surface-elevated-dark px-4 text-sm font-semibold text-body-on-dark">
-                {attemptSummary.totalFullRounds}/{attemptSummary.totalReviewRounds}
+                {attemptSummary.totalFullRounds} / {attemptSummary.totalReviewRounds}
               </span>
             </div>
           </>
@@ -389,7 +413,7 @@ function ActivityCard({
       </div>
 
       <Link
-        className={isCompleted ? "button-secondary-on-dark mt-8 w-full" : "button-primary mt-8 w-full"}
+        className={`mt-8 w-full ${isCompleted ? "button-secondary-on-dark" : "button-primary"}`}
         href={`/activity/${activity.id}`}
       >
         {isCompleted ? "다시 풀기" : "시작하기"}

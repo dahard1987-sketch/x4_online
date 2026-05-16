@@ -1,7 +1,11 @@
 import type { Timestamp } from "firebase/firestore";
 
 type QuestionBase = {
-  type: "multiple_choice" | "binary_choice";
+  type:
+    | "multiple_choice"
+    | "binary_choice"
+    | "word_arrangement"
+    | "sentence_construction";
   prompt: string;
   explanation?: string;
   tags?: string[];
@@ -21,4 +25,25 @@ export type BinaryChoiceQuestion = QuestionBase & {
   answer: 0 | 1;
 };
 
-export type Question = MultipleChoiceQuestion | BinaryChoiceQuestion;
+export type WordArrangementQuestion = QuestionBase & {
+  type: "word_arrangement";
+  hint?: string;
+  words: string[];
+  answer: string[];
+  acceptableAnswers?: string[][];
+  properNounIndices?: number[];
+};
+
+export type SentenceConstructionQuestion = QuestionBase & {
+  type: "sentence_construction";
+  koreanHint: string;
+  givenWords: string[];
+  answer: string;
+  acceptableAnswers?: string[];
+};
+
+export type Question =
+  | MultipleChoiceQuestion
+  | BinaryChoiceQuestion
+  | WordArrangementQuestion
+  | SentenceConstructionQuestion;

@@ -6,13 +6,28 @@ import type {
   AttemptDetail,
   AttemptRoundSummary,
 } from "@/types/attempt";
+import { compareWordArrangementAnswer } from "@/lib/wordArrangement";
+import { compareSentenceConstructionAnswer } from "@/lib/sentenceConstruction";
 
 export type ActivityRunnerQuestion = {
   id: string;
   type: string;
   prompt: string;
+  // multiple_choice / binary_choice
   choices?: string[];
   answer?: number;
+  // word_arrangement
+  hint?: string;
+  words?: string[];
+  wordAnswer?: string[];
+  acceptableAnswers?: string[][];
+  properNounIndices?: number[];
+  // sentence_construction
+  koreanHint?: string;
+  givenWords?: string[];
+  sentenceAnswer?: string;
+  scAcceptableAnswers?: string[];
+  // common
   explanation?: string;
 };
 
@@ -27,11 +42,47 @@ type ShuffledChoice = {
   originalIndex: number;
 };
 
+type ShuffledWord = {
+  text: string;
+  originalIndex: number;
+};
+
+type WordArrangementRunnerQuestion = ActivityRunnerQuestion & {
+  type: "word_arrangement";
+  words: string[];
+  wordAnswer: string[];
+};
+
+type SentenceConstructionRunnerQuestion = ActivityRunnerQuestion & {
+  type: "sentence_construction";
+  sentenceAnswer: string;
+};
+
+function isWordArrangementQuestion(
+  question: ActivityRunnerQuestion,
+): question is WordArrangementRunnerQuestion {
+  return (
+    question.type === "word_arrangement" &&
+    Array.isArray(question.words) &&
+    Array.isArray(question.wordAnswer)
+  );
+}
+
+function isSentenceConstructionQuestion(
+  question: ActivityRunnerQuestion,
+): question is SentenceConstructionRunnerQuestion {
+  return (
+    question.type === "sentence_construction" &&
+    typeof question.sentenceAnswer === "string"
+  );
+}
+
 type RoundMode = "full" | "review";
 
 type RoundQuestionState = {
   roundQuestions: ActivityRunnerQuestion[];
   shuffledChoices: ShuffledChoice[];
+  shuffledWords: ShuffledWord[];
 };
 
 type QuestionProgress = {
@@ -92,6 +143,22 @@ function shuffleArray<T>(items: T[]) {
   return shuffledItems;
 }
 
+function buildShuffledWords(
+  question: ActivityRunnerQuestion | undefined,
+): ShuffledWord[] {
+  if (
+    !question ||
+    question.type !== "word_arrangement" ||
+    !Array.isArray(question.words)
+  ) {
+    return [];
+  }
+
+  return shuffleArray(
+    question.words.map((text, originalIndex) => ({ text, originalIndex })),
+  );
+}
+
 function buildShuffledChoices(
   question: ActivityRunnerQuestion | undefined,
 ): ShuffledChoice[] {
@@ -117,6 +184,7 @@ function buildRoundQuestionState(
   return {
     roundQuestions,
     shuffledChoices: buildShuffledChoices(roundQuestions[0]),
+    shuffledWords: buildShuffledWords(roundQuestions[0]),
   };
 }
 
@@ -178,9 +246,11 @@ export default function ActivityRunner({
   );
   const [questionIndex, setQuestionIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
+  const [sentenceInput, setSentenceInput] = useState("");
   const [feedback, setFeedback] = useState<{
     isCorrect: boolean;
     explanation: string;
+    correctAnswer?: string;
   } | null>(null);
   const [roundCorrectCount, setRoundCorrectCount] = useState(0);
   const [roundWrongQuestions, setRoundWrongQuestions] = useState<
@@ -195,17 +265,29 @@ export default function ActivityRunner({
   >({});
   const [totalAnsweredCount, setTotalAnsweredCount] = useState(0);
   const [isComplete, setIsComplete] = useState(false);
+  const [selectedWordTokens, setSelectedWordTokens] = useState<ShuffledWord[]>(
+    [],
+  );
 
-  const { roundQuestions, shuffledChoices } = roundState;
+  const { roundQuestions, shuffledChoices, shuffledWords } = roundState;
   const currentQuestion = roundQuestions[questionIndex];
   const supportedCurrentQuestion =
     currentQuestion && isSupportedQuestion(currentQuestion)
+      ? currentQuestion
+      : null;
+  const wordArrangementCurrentQuestion =
+    currentQuestion && isWordArrangementQuestion(currentQuestion)
+      ? currentQuestion
+      : null;
+  const sentenceConstructionCurrentQuestion =
+    currentQuestion && isSentenceConstructionQuestion(currentQuestion)
       ? currentQuestion
       : null;
   const progressPercent =
     roundQuestions.length > 0
       ? ((questionIndex + 1) / roundQuestions.length) * 100
       : 0;
+  const isLastQuestion = questionIndex === roundQuestions.length - 1;
 
   const result = useMemo(() => {
     const bestScore =
@@ -229,16 +311,42 @@ export default function ActivityRunner({
         : `전체 재도전 ${fullRoundNumber}`;
 
   function handleSubmit() {
-    if (
-      selectedAnswer === null ||
-      feedback ||
-      !currentQuestion ||
-      !isSupportedQuestion(currentQuestion)
-    ) {
+    if (feedback || !currentQuestion) {
       return;
     }
 
-    const isCorrect = selectedAnswer === currentQuestion.answer;
+    let isCorrect: boolean;
+    let correctAnswer: string | undefined;
+
+    if (isSentenceConstructionQuestion(currentQuestion)) {
+      if (sentenceInput.trim() === "") {
+        return;
+      }
+      isCorrect = compareSentenceConstructionAnswer(
+        sentenceInput,
+        currentQuestion.sentenceAnswer,
+        currentQuestion.scAcceptableAnswers,
+      );
+      if (!isCorrect) {
+        correctAnswer = currentQuestion.sentenceAnswer;
+      }
+    } else if (isWordArrangementQuestion(currentQuestion)) {
+      if (selectedWordTokens.length === 0) {
+        return;
+      }
+      isCorrect = compareWordArrangementAnswer(
+        selectedWordTokens.map((token) => token.text),
+        currentQuestion.wordAnswer,
+        currentQuestion.acceptableAnswers,
+      );
+    } else if (isSupportedQuestion(currentQuestion)) {
+      if (selectedAnswer === null) {
+        return;
+      }
+      isCorrect = selectedAnswer === currentQuestion.answer;
+    } else {
+      return;
+    }
 
     setTotalAnsweredCount((count) => count + 1);
     setQuestionProgress((progressByQuestionId) => {
@@ -266,6 +374,7 @@ export default function ActivityRunner({
     setFeedback({
       isCorrect,
       explanation: currentQuestion.explanation || "해설이 아직 없습니다.",
+      ...(correctAnswer ? { correctAnswer } : {}),
     });
 
     if (isCorrect) {
@@ -296,8 +405,13 @@ export default function ActivityRunner({
         shuffledChoices: buildShuffledChoices(
           currentRoundState.roundQuestions[nextIndex],
         ),
+        shuffledWords: buildShuffledWords(
+          currentRoundState.roundQuestions[nextIndex],
+        ),
       }));
       setSelectedAnswer(null);
+      setSelectedWordTokens([]);
+      setSentenceInput("");
       setFeedback(null);
       return;
     }
@@ -317,6 +431,8 @@ export default function ActivityRunner({
       setRoundState(startFullRound(questions));
       setQuestionIndex(0);
       setSelectedAnswer(null);
+      setSelectedWordTokens([]);
+      setSentenceInput("");
       setFeedback(null);
       setRoundCorrectCount(0);
       setRoundWrongQuestions([]);
@@ -372,6 +488,8 @@ export default function ActivityRunner({
     setRoundState(startReviewRound(roundWrongQuestions));
     setQuestionIndex(0);
     setSelectedAnswer(null);
+    setSelectedWordTokens([]);
+    setSentenceInput("");
     setFeedback(null);
     setRoundCorrectCount(0);
     setRoundWrongQuestions([]);
@@ -395,90 +513,82 @@ export default function ActivityRunner({
   if (isComplete) {
     return (
       <main className="min-h-screen bg-canvas-light px-5 py-10 text-body-on-light">
-        <section className="mx-auto flex min-h-[calc(100vh-80px)] max-w-learning items-center">
-          <div className="w-full rounded-xl border border-hairline-on-light bg-canvas-light p-6 sm:p-8">
-            <p className="text-sm font-semibold text-primary">
-              Activity Result
-            </p>
-            <h1 className="mt-4 text-4xl font-bold text-body-on-light">
-              100점 완료
-            </h1>
-            <p className="mt-4 text-base leading-7 text-muted">
-              모든 문항을 100점으로 마무리했습니다.
-            </p>
+        <section className="mx-auto max-w-learning">
+          <div className="overflow-hidden rounded-xl border border-hairline-on-light">
+            <div className="bg-primary px-6 py-10 text-center text-on-primary sm:px-8 sm:py-14">
+              <p className="text-sm font-semibold opacity-75">{activityTitle}</p>
+              <p className="mt-5 text-[80px] font-bold leading-none tabular-nums">
+                100
+              </p>
+              <p className="text-2xl font-bold">점</p>
+              <p className="mt-4 text-sm opacity-75">
+                모든 문항을 완료했습니다!
+              </p>
+            </div>
 
-            {saveStatus ? (
-              <div className="mt-5 rounded-lg border border-hairline-on-light bg-surface-soft-light p-4 text-sm">
-                {saveStatus === "saving" ? (
-                  <p className="font-semibold text-primary">
-                    학습 결과를 저장하고 있습니다.
-                  </p>
-                ) : null}
-                {saveStatus === "saved" ? (
-                  <p className="font-semibold text-correct">
-                    학습 결과가 저장되었습니다.
-                  </p>
-                ) : null}
-                {saveStatus === "error" ? (
-                  <p className="font-semibold text-incorrect">
-                    학습 결과 저장에 실패했습니다.
-                  </p>
-                ) : null}
-                {savedAttemptId ? (
-                  <p className="mt-2 text-xs text-muted">
-                    attempt id: {savedAttemptId}
-                  </p>
-                ) : null}
-                {saveErrorMessage ? (
-                  <p className="mt-2 text-xs leading-5 text-body-on-light">
-                    {saveErrorMessage}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
+            <div className="bg-canvas-light p-6 sm:p-8">
+              {saveStatus ? (
+                <div className="rounded-lg border border-hairline-on-light bg-surface-soft-light p-4 text-sm">
+                  {saveStatus === "saving" ? (
+                    <p className="font-semibold text-primary">
+                      학습 결과를 저장하고 있습니다.
+                    </p>
+                  ) : null}
+                  {saveStatus === "saved" ? (
+                    <p className="font-semibold text-correct">
+                      학습 결과가 저장되었습니다.
+                    </p>
+                  ) : null}
+                  {saveStatus === "error" ? (
+                    <p className="font-semibold text-incorrect">
+                      학습 결과 저장에 실패했습니다.
+                    </p>
+                  ) : null}
+                  {saveErrorMessage ? (
+                    <p className="mt-2 text-xs leading-5 text-body-on-light">
+                      {saveErrorMessage}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
 
-            <dl className="mt-8 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-lg border border-hairline-on-light bg-surface-soft-light p-5">
-                <dt className="text-sm text-muted">첫 전체 풀이 점수</dt>
-                <dd className="mt-3 text-2xl font-semibold text-body-on-light">
-                  {result.firstRoundScore}점
-                </dd>
-              </div>
-              <div className="rounded-lg border border-hairline-on-light bg-surface-soft-light p-5">
-                <dt className="text-sm text-muted">최고 전체 풀이 점수</dt>
-                <dd className="mt-3 text-2xl font-semibold text-body-on-light">
-                  {result.bestScore}점
-                </dd>
-              </div>
-              <div className="rounded-lg border border-primary bg-primary p-5 text-on-primary">
-                <dt className="text-sm font-semibold">최종 점수</dt>
-                <dd className="mt-3 text-2xl font-semibold">
-                  {result.finalScore}점
-                </dd>
-              </div>
-              <div className="rounded-lg border border-hairline-on-light bg-surface-soft-light p-5">
-                <dt className="text-sm text-muted">전체 풀이 횟수</dt>
-                <dd className="mt-3 text-2xl font-semibold text-body-on-light">
-                  {result.totalFullRounds}
-                </dd>
-              </div>
-              <div className="rounded-lg border border-hairline-on-light bg-surface-soft-light p-5">
-                <dt className="text-sm text-muted">오답 복습 횟수</dt>
-                <dd className="mt-3 text-2xl font-semibold text-body-on-light">
-                  {result.totalReviewRounds}
-                </dd>
-              </div>
-              <div className="rounded-lg border border-hairline-on-light bg-surface-soft-light p-5">
-                <dt className="text-sm text-muted">총 풀이 문항 수</dt>
-                <dd className="mt-3 text-2xl font-semibold text-body-on-light">
-                  {result.totalAnsweredCount}
-                </dd>
-              </div>
-            </dl>
+              <dl className="mt-6 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-lg border border-hairline-on-light bg-surface-soft-light p-5">
+                  <dt className="text-sm text-muted">첫 전체 풀이 점수</dt>
+                  <dd className="mt-3 text-2xl font-semibold tabular-nums text-body-on-light">
+                    {result.firstRoundScore}점
+                  </dd>
+                </div>
+                <div className="rounded-lg border border-hairline-on-light bg-surface-soft-light p-5">
+                  <dt className="text-sm text-muted">최고 전체 풀이 점수</dt>
+                  <dd className="mt-3 text-2xl font-semibold tabular-nums text-body-on-light">
+                    {result.bestScore}점
+                  </dd>
+                </div>
+                <div className="rounded-lg border border-hairline-on-light bg-surface-soft-light p-5">
+                  <dt className="text-sm text-muted">전체 풀이 횟수</dt>
+                  <dd className="mt-3 text-2xl font-semibold tabular-nums text-body-on-light">
+                    {result.totalFullRounds}회
+                  </dd>
+                </div>
+                <div className="rounded-lg border border-hairline-on-light bg-surface-soft-light p-5">
+                  <dt className="text-sm text-muted">오답 복습 횟수</dt>
+                  <dd className="mt-3 text-2xl font-semibold tabular-nums text-body-on-light">
+                    {result.totalReviewRounds}회
+                  </dd>
+                </div>
+                <div className="rounded-lg border border-hairline-on-light bg-surface-soft-light p-5">
+                  <dt className="text-sm text-muted">총 풀이 문항 수</dt>
+                  <dd className="mt-3 text-2xl font-semibold tabular-nums text-body-on-light">
+                    {result.totalAnsweredCount}개
+                  </dd>
+                </div>
+              </dl>
 
-            <Link className="button-primary mt-8" href="/dashboard">
-              대시보드로 돌아가기
-            </Link>
+              <Link className="button-primary mt-8" href="/dashboard">
+                대시보드로 돌아가기
+              </Link>
+            </div>
           </div>
         </section>
       </main>
@@ -520,7 +630,30 @@ export default function ActivityRunner({
           </div>
 
           <div className="mt-10">
-            {!supportedCurrentQuestion ? (
+            {sentenceConstructionCurrentQuestion ? (
+              <SentenceConstructionPrompt
+                question={sentenceConstructionCurrentQuestion}
+                sentenceInput={sentenceInput}
+                isDisabled={Boolean(feedback)}
+                onInputChange={setSentenceInput}
+              />
+            ) : wordArrangementCurrentQuestion ? (
+              <WordArrangementPrompt
+                question={wordArrangementCurrentQuestion}
+                shuffledWords={shuffledWords}
+                selectedWordTokens={selectedWordTokens}
+                isDisabled={Boolean(feedback)}
+                onSelectWord={(word) =>
+                  setSelectedWordTokens((tokens) => [...tokens, word])
+                }
+                onDeselectWord={(positionIndex) =>
+                  setSelectedWordTokens((tokens) =>
+                    tokens.filter((_, i) => i !== positionIndex),
+                  )
+                }
+                onClearAll={() => setSelectedWordTokens([])}
+              />
+            ) : !supportedCurrentQuestion ? (
               <UnsupportedQuestionMessage />
             ) : supportedCurrentQuestion.type === "multiple_choice" ? (
               <MultipleChoicePrompt
@@ -545,8 +678,8 @@ export default function ActivityRunner({
             <div
               className={`mt-8 rounded-lg border p-4 ${
                 feedback.isCorrect
-                  ? "border-correct bg-[#f0fbf6]"
-                  : "border-incorrect bg-[#fff2f2]"
+                  ? "border-correct bg-correct/10"
+                  : "border-incorrect bg-incorrect/10"
               }`}
             >
               <p
@@ -556,6 +689,14 @@ export default function ActivityRunner({
               >
                 {feedback.isCorrect ? "정답입니다." : "오답입니다."}
               </p>
+              {feedback.correctAnswer ? (
+                <p className="mt-2 text-sm leading-6 text-muted">
+                  정답:{" "}
+                  <span className="font-semibold text-body-on-light">
+                    {feedback.correctAnswer}
+                  </span>
+                </p>
+              ) : null}
               <p className="mt-2 text-sm leading-6 text-body-on-light">
                 {feedback.explanation}
               </p>
@@ -573,12 +714,18 @@ export default function ActivityRunner({
               </button>
             ) : (
               <button
-                className="button-primary"
+                className={isLastQuestion ? "button-correct" : "button-primary"}
                 type="button"
                 onClick={handleSubmit}
-                disabled={selectedAnswer === null || !supportedCurrentQuestion}
+                disabled={
+                  sentenceConstructionCurrentQuestion
+                    ? sentenceInput.trim() === ""
+                    : wordArrangementCurrentQuestion
+                      ? selectedWordTokens.length === 0
+                      : selectedAnswer === null || !supportedCurrentQuestion
+                }
               >
-                제출
+                {isLastQuestion ? "답안 제출" : "제출"}
               </button>
             )}
           </div>
@@ -590,12 +737,12 @@ export default function ActivityRunner({
 
 function UnsupportedQuestionMessage() {
   return (
-    <div className="rounded-lg border border-incorrect bg-[#fff2f2] p-5">
+    <div className="rounded-lg border border-incorrect bg-incorrect/10 p-5">
       <p className="text-sm font-semibold text-incorrect">
         아직 지원하지 않는 문항 유형입니다.
       </p>
       <p className="mt-2 text-sm leading-6 text-body-on-light">
-        현재 풀이 화면은 객관식과 이항대립 문항만 지원합니다.
+        현재 객관식, 이항대립, 단어 배열, 문장 완성 문항을 지원합니다.
       </p>
     </div>
   );
@@ -620,7 +767,7 @@ function MultipleChoicePrompt({
       <div className="mt-8 grid gap-3">
         {choices.map((choice) => (
           <button
-            className={`min-h-12 rounded-md border px-4 py-3 text-left text-sm font-semibold transition ${
+            className={`min-h-12 rounded-md border px-4 py-3 text-left text-base font-semibold transition ${
               selectedAnswer === choice.originalIndex
                 ? "border-primary bg-primary-subtle text-body-on-light"
                 : "border-hairline-on-light bg-canvas-light text-body-on-light hover:bg-surface-soft-light"
@@ -666,7 +813,7 @@ function BinaryChoicePrompt({
             key={choice.originalIndex}
           >
             <button
-              className={`inline-flex min-h-9 items-center rounded-pill border px-3 text-sm font-semibold transition ${
+              className={`inline-flex min-h-9 items-center rounded-pill border px-3 text-base font-semibold transition ${
                 selectedAnswer === choice.originalIndex
                   ? "border-primary bg-primary text-on-primary"
                   : "border-hairline-on-light bg-canvas-light text-body-on-light hover:bg-surface-soft-light"
@@ -686,5 +833,169 @@ function BinaryChoicePrompt({
       </span>
       <span>{afterChoice}</span>
     </div>
+  );
+}
+
+function WordArrangementPrompt({
+  question,
+  shuffledWords,
+  selectedWordTokens,
+  isDisabled,
+  onSelectWord,
+  onDeselectWord,
+  onClearAll,
+}: {
+  question: WordArrangementRunnerQuestion;
+  shuffledWords: ShuffledWord[];
+  selectedWordTokens: ShuffledWord[];
+  isDisabled: boolean;
+  onSelectWord: (word: ShuffledWord) => void;
+  onDeselectWord: (positionIndex: number) => void;
+  onClearAll: () => void;
+}) {
+  const selectedOriginalIndices = new Set(
+    selectedWordTokens.map((w) => w.originalIndex),
+  );
+  const availableWords = shuffledWords.filter(
+    (w) => !selectedOriginalIndices.has(w.originalIndex),
+  );
+
+  return (
+    <>
+      <p className="text-question-body text-body-on-light">{question.prompt}</p>
+      {question.hint ? (
+        <p className="mt-2 text-sm leading-6 text-muted">{question.hint}</p>
+      ) : null}
+
+      <div className="mt-6">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+            내 답안
+          </p>
+          {!isDisabled ? (
+            <p className="text-xs tabular-nums text-muted">
+              {selectedWordTokens.length} / {shuffledWords.length}
+            </p>
+          ) : null}
+        </div>
+        <div className="mt-2 min-h-14 rounded-lg border border-hairline-on-light bg-surface-strong-light p-3">
+          {selectedWordTokens.length === 0 ? (
+            <p className="py-1 text-sm text-muted">
+              아래 단어를 눌러 순서대로 배치하세요.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {selectedWordTokens.map((token, positionIndex) => (
+                <button
+                  className={`inline-flex min-h-9 items-center rounded-md border px-3 text-sm font-semibold transition ${
+                    isDisabled
+                      ? "border-primary/40 bg-primary-subtle text-body-on-light"
+                      : "border-primary bg-primary-subtle text-body-on-light hover:border-primary hover:bg-primary/20"
+                  }`}
+                  key={`selected-${positionIndex}-${token.originalIndex}`}
+                  type="button"
+                  onClick={() => {
+                    if (!isDisabled) onDeselectWord(positionIndex);
+                  }}
+                  disabled={isDisabled}
+                >
+                  {token.text}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        {selectedWordTokens.length > 0 && !isDisabled ? (
+          <button
+            className="mt-1.5 text-xs text-muted hover:text-body-on-light"
+            type="button"
+            onClick={onClearAll}
+          >
+            전체 지우기
+          </button>
+        ) : null}
+      </div>
+
+      <div className="mt-6">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+          단어 목록
+        </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {availableWords.map((word) => (
+            <button
+              className={`inline-flex min-h-10 items-center rounded-md border px-4 text-sm font-semibold transition ${
+                isDisabled
+                  ? "border-hairline-on-light bg-surface-soft-light text-muted"
+                  : "border-hairline-on-light bg-canvas-light text-body-on-light hover:border-primary/40 hover:bg-surface-soft-light"
+              }`}
+              key={`word-${word.originalIndex}`}
+              type="button"
+              onClick={() => {
+                if (!isDisabled) onSelectWord(word);
+              }}
+              disabled={isDisabled}
+            >
+              {word.text}
+            </button>
+          ))}
+          {availableWords.length === 0 && !isDisabled ? (
+            <p className="py-1 text-sm text-muted">모든 단어를 배치했습니다.</p>
+          ) : null}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function SentenceConstructionPrompt({
+  question,
+  sentenceInput,
+  isDisabled,
+  onInputChange,
+}: {
+  question: SentenceConstructionRunnerQuestion;
+  sentenceInput: string;
+  isDisabled: boolean;
+  onInputChange: (value: string) => void;
+}) {
+  return (
+    <>
+      <p className="text-question-body text-body-on-light">{question.prompt}</p>
+      {question.koreanHint ? (
+        <p className="mt-2 text-sm leading-6 text-muted">{question.koreanHint}</p>
+      ) : null}
+
+      {question.givenWords && question.givenWords.length > 0 ? (
+        <div className="mt-6">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+            주어진 단어
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {question.givenWords.map((word, index) => (
+              <span
+                className="inline-flex min-h-9 items-center rounded-pill border border-hairline-on-light bg-surface-soft-light px-3 text-sm font-semibold text-body-on-light"
+                key={`${word}-${index}`}
+              >
+                {word}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mt-6">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+          내 답안
+        </p>
+        <textarea
+          className="mt-2 w-full resize-none rounded-lg border border-hairline-on-light bg-surface-strong-light p-3 text-sm leading-7 text-body-on-light placeholder:text-muted focus:border-primary focus:outline-none disabled:text-muted"
+          rows={3}
+          value={sentenceInput}
+          onChange={(event) => onInputChange(event.target.value)}
+          disabled={isDisabled}
+          placeholder="영어 문장을 입력하세요."
+        />
+      </div>
+    </>
   );
 }
