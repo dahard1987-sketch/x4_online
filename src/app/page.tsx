@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 
 const coreValues = [
   {
@@ -48,12 +49,12 @@ export default function Home() {
             <a className="transition hover:text-body-on-dark" href="#guide">
               학습 안내
             </a>
-            <a className="transition hover:text-body-on-dark" href="#top">
+            <Link className="transition hover:text-body-on-dark" href="/login">
               학습 시작
-            </a>
-            <a className="transition hover:text-body-on-dark" href="#guide">
+            </Link>
+            <Link className="transition hover:text-body-on-dark" href="/login">
               관리자
-            </a>
+            </Link>
           </div>
         </nav>
       </header>
@@ -72,9 +73,9 @@ export default function Home() {
               100점을 받을 때까지 반복하도록 설계된 학습 플랫폼입니다.
             </p>
             <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-              <a className="button-primary-pill" href="#top">
+              <Link className="button-primary-pill" href="/login">
                 학습 시작
-              </a>
+              </Link>
               <a className="button-secondary-on-dark" href="#flow">
                 학습 방식 보기
               </a>
