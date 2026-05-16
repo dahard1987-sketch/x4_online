@@ -3,71 +3,57 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged, signOut, type User } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { collection, getDocs, orderBy, query } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
+import type { Activity } from "@/types/activity";
 
-type ActivityStatus = "not_started" | "in_progress" | "completed";
-
-type Activity = {
-  title: string;
-  status: ActivityStatus;
-  statusLabel: string;
-  bestScore: number | null;
-  actionLabel: string;
-  href?: string;
+type DashboardActivity = Activity & {
+  id: string;
 };
 
-const mockActivities: Activity[] = [
-  {
-    title: "X4 문법 훈련 01",
-    status: "not_started",
-    statusLabel: "미시작",
-    bestScore: null,
-    actionLabel: "시작하기",
-    href: "/activity/mock-grammar-01",
-  },
-  {
-    title: "X4 문법 훈련 02",
-    status: "in_progress",
-    statusLabel: "진행중",
-    bestScore: 70,
-    actionLabel: "이어하기",
-  },
-  {
-    title: "X4 문법 훈련 03",
-    status: "completed",
-    statusLabel: "완료",
-    bestScore: 100,
-    actionLabel: "결과 보기",
-  },
-];
+function getTodayDate() {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
 
-function getStatusClassName(status: ActivityStatus) {
-  if (status === "completed") {
-    return "border-correct/40 bg-canvas-dark text-correct";
-  }
-
-  if (status === "in_progress") {
-    return "border-primary/40 bg-canvas-dark text-primary";
-  }
-
-  return "border-hairline-on-dark bg-canvas-dark text-muted";
+  return `${year}-${month}-${day}`;
 }
 
-function getScoreClassName(score: number | null) {
-  if (score === 100) {
-    return "bg-primary text-on-primary";
-  }
-
-  return "bg-surface-elevated-dark text-body-on-dark";
+function getStatusClassName() {
+  return "border-hairline-on-dark bg-canvas-dark text-muted";
 }
 
 export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
+  const [activities, setActivities] = useState<DashboardActivity[]>([]);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [isLoadingActivities, setIsLoadingActivities] = useState(true);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const today = getTodayDate();
+
+  const groupedActivities = useMemo(() => {
+    const todayActivities = activities.filter(
+      (activity) => activity.date === today,
+    );
+    const upcomingActivities = activities.filter(
+      (activity) => activity.date > today,
+    );
+    const pastActivities = activities
+      .filter((activity) => activity.date < today)
+      .slice()
+      .reverse();
+
+    return {
+      todayActivities,
+      upcomingActivities,
+      pastActivities,
+    };
+  }, [activities, today]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -82,6 +68,42 @@ export default function DashboardPage() {
 
     return unsubscribe;
   }, [router]);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    async function loadActivities() {
+      setIsLoadingActivities(true);
+      setErrorMessage("");
+
+      try {
+        const snapshot = await getDocs(
+          query(collection(db, "activities"), orderBy("date", "asc")),
+        );
+
+        const allActivities = snapshot.docs.map((activityDoc) => ({
+          id: activityDoc.id,
+          ...(activityDoc.data() as Activity),
+        }));
+
+        setActivities(
+          allActivities.filter((activity) => activity.assignedTo === "all"),
+        );
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error
+            ? `활동 목록을 불러오지 못했습니다: ${error.message}`
+            : "활동 목록을 불러오는 중 알 수 없는 오류가 발생했습니다.",
+        );
+      } finally {
+        setIsLoadingActivities(false);
+      }
+    }
+
+    loadActivities();
+  }, [user]);
 
   async function handleSignOut() {
     setIsSigningOut(true);
@@ -155,61 +177,110 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        <div className="mt-10 grid gap-4 lg:grid-cols-3">
-          {mockActivities.map((activity) => (
-            <article
-              key={activity.title}
-              className="rounded-xl border border-hairline-on-dark bg-surface-card-dark p-6"
-            >
-              <div className="flex items-start justify-between gap-4">
-                <h2 className="text-xl font-semibold leading-snug text-body-on-dark">
-                  {activity.title}
-                </h2>
-                <span
-                  className={`rounded-sm border px-3 py-1.5 text-sm font-semibold ${getStatusClassName(
-                    activity.status,
-                  )}`}
-                >
-                  {activity.statusLabel}
-                </span>
-              </div>
+        {isLoadingActivities ? (
+          <p className="mt-10 rounded-xl border border-hairline-on-dark bg-surface-card-dark p-6 text-sm text-muted">
+            활동 목록을 불러오고 있습니다.
+          </p>
+        ) : null}
 
-              <div className="mt-8 border-t border-hairline-on-dark pt-6">
-                <p className="text-sm text-muted">최고점</p>
-                <span
-                  className={`mt-3 inline-flex min-h-9 items-center rounded-md px-4 text-sm font-semibold ${getScoreClassName(
-                    activity.bestScore,
-                  )}`}
-                >
-                  {activity.bestScore === null
-                    ? "-"
-                    : `${activity.bestScore}점`}
-                </span>
-              </div>
+        {errorMessage ? (
+          <p className="mt-10 rounded-xl border border-incorrect bg-surface-card-dark p-6 text-sm text-body-on-dark">
+            {errorMessage}
+          </p>
+        ) : null}
 
-              {activity.href ? (
-                <Link
-                  className="button-primary mt-8 w-full"
-                  href={activity.href}
-                >
-                  {activity.actionLabel}
-                </Link>
-              ) : (
-                <button
-                  className={
-                    activity.status === "completed"
-                      ? "mt-8 inline-flex min-h-10 w-full items-center justify-center rounded-md border border-correct/40 bg-canvas-dark px-6 text-sm font-semibold text-correct transition hover:bg-surface-elevated-dark"
-                      : "button-primary mt-8 w-full"
-                  }
-                  type="button"
-                >
-                  {activity.actionLabel}
-                </button>
-              )}
-            </article>
-          ))}
-        </div>
+        {!isLoadingActivities && !errorMessage ? (
+          <div className="mt-10 grid gap-10">
+            <ActivitySection
+              title="오늘 배정된 활동"
+              emptyMessage="오늘 배정된 활동이 없습니다."
+              activities={groupedActivities.todayActivities}
+            />
+            {groupedActivities.upcomingActivities.length > 0 ? (
+              <ActivitySection
+                title="예정된 활동"
+                activities={groupedActivities.upcomingActivities}
+              />
+            ) : null}
+            {groupedActivities.pastActivities.length > 0 ? (
+              <ActivitySection
+                title="지난 활동"
+                activities={groupedActivities.pastActivities}
+              />
+            ) : null}
+          </div>
+        ) : null}
       </section>
     </main>
+  );
+}
+
+function ActivitySection({
+  title,
+  emptyMessage,
+  activities,
+}: {
+  title: string;
+  emptyMessage?: string;
+  activities: DashboardActivity[];
+}) {
+  return (
+    <section>
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="text-xl font-semibold text-body-on-dark">{title}</h2>
+        <span className="text-sm text-muted">{activities.length}개</span>
+      </div>
+
+      {activities.length === 0 ? (
+        <p className="mt-4 rounded-xl border border-hairline-on-dark bg-surface-card-dark p-6 text-sm text-muted">
+          {emptyMessage || "표시할 활동이 없습니다."}
+        </p>
+      ) : (
+        <div className="mt-4 grid gap-4 lg:grid-cols-3">
+          {activities.map((activity) => (
+            <ActivityCard activity={activity} key={activity.id} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ActivityCard({ activity }: { activity: DashboardActivity }) {
+  return (
+    <article className="rounded-xl border border-hairline-on-dark bg-surface-card-dark p-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold text-primary">{activity.date}</p>
+          <h3 className="mt-3 text-xl font-semibold leading-snug text-body-on-dark">
+            {activity.title}
+          </h3>
+        </div>
+        <span
+          className={`rounded-sm border px-3 py-1.5 text-sm font-semibold ${getStatusClassName()}`}
+        >
+          미시작
+        </span>
+      </div>
+
+      <div className="mt-8 grid grid-cols-2 gap-3 border-t border-hairline-on-dark pt-6">
+        <div>
+          <p className="text-sm text-muted">문항 수</p>
+          <span className="mt-3 inline-flex min-h-9 items-center rounded-md bg-surface-elevated-dark px-4 text-sm font-semibold text-body-on-dark">
+            {activity.questionIds.length}개
+          </span>
+        </div>
+        <div>
+          <p className="text-sm text-muted">상태</p>
+          <span className="mt-3 inline-flex min-h-9 items-center rounded-md bg-surface-elevated-dark px-4 text-sm font-semibold text-body-on-dark">
+            미시작
+          </span>
+        </div>
+      </div>
+
+      <Link className="button-primary mt-8 w-full" href={`/activity/${activity.id}`}>
+        시작하기
+      </Link>
+    </article>
   );
 }
