@@ -83,6 +83,9 @@ export default function ActivitiesPage() {
             >
               새 활동 만들기
             </Link>
+            <Link className="button-secondary-on-dark" href="/admin/attempts">
+              학습 결과
+            </Link>
             <Link className="button-secondary-on-dark" href="/admin/questions">
               문항 목록
             </Link>

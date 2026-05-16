@@ -222,6 +222,9 @@ export default function DashboardPage() {
             >
               활동 만들기
             </Link>
+            <Link className="button-secondary-on-dark" href="/admin/attempts">
+              학습 결과
+            </Link>
             <button
               className="button-secondary-on-dark"
               type="button"

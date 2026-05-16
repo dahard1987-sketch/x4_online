@@ -65,6 +65,9 @@ export default function QuestionsPage() {
             >
               활동 만들기
             </Link>
+            <Link className="button-secondary-on-dark" href="/admin/attempts">
+              학습 결과
+            </Link>
             <Link className="button-primary" href="/admin/questions/new">
               새 문항 만들기
             </Link>
