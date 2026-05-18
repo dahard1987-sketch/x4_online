@@ -13,6 +13,12 @@ import {
   parseAcceptableAnswers,
   parseGivenWords,
 } from "@/lib/sentenceConstruction";
+import {
+  getRoleLabel,
+  normalizeTokenIndices,
+  tokenizeSentenceForParsing,
+} from "@/lib/sentenceParsing";
+import type { SentenceParsingRole } from "@/lib/sentenceParsing";
 import type { Question } from "@/types/question";
 
 type QuestionType =
@@ -21,7 +27,8 @@ type QuestionType =
   | "word_arrangement"
   | "sentence_construction"
   | "word_form"
-  | "underline_judgment";
+  | "underline_judgment"
+  | "sentence_parsing";
 
 const multipleChoiceDefaults = {
   prompt: "다음 중 어법상 올바른 문장을 선택하세요.",
@@ -35,7 +42,7 @@ const multipleChoiceDefaults = {
 };
 
 const binaryChoiceDefaults = {
-  prompt: "The bus {{choice}} at 7 a.m. every day.",
+  prompt: "The bus ( ) at 7 a.m. every day.",
   choices: ["start", "starts"] as [string, string],
   answer: 1,
 };
@@ -55,7 +62,7 @@ const sentenceConstructionDefaults = {
 
 const wordFormDefaults = {
   prompt: "주어진 단어를 문맥에 맞게 알맞은 형태로 바꾸세요.",
-  sentence: "I {{blank}} to school yesterday.",
+  sentence: "I ___ to school yesterday.",
   baseWord: "go",
   hint: "과거형",
   answer: "went",
@@ -63,9 +70,19 @@ const wordFormDefaults = {
 
 const underlineJudgmentDefaults = {
   prompt: "다음 문장에서 밑줄 친 부분의 어법이 올바른지 판단하세요.",
-  sentence: "He {{ul}}goed{{/ul}} to school yesterday.",
+  sentence: "He [goed] to school yesterday.",
   isCorrect: false,
   correction: "went",
+};
+
+const sentenceParsingDefaults = {
+  prompt: "문장에서 주어, 동사, 전치사구를 찾아 표시하세요.",
+  sentence: "The car over there belongs to Mike.",
+  targets: [
+    { role: "subject" as SentenceParsingRole, tokenIndices: [0, 1, 2, 3] },
+    { role: "verb" as SentenceParsingRole, tokenIndices: [4] },
+    { role: "prepositional" as SentenceParsingRole, tokenIndices: [5, 6] },
+  ],
 };
 
 export default function NewQuestionPage() {
@@ -120,6 +137,16 @@ export default function NewQuestionPage() {
   const [ujCorrection, setUjCorrection] = useState(
     underlineJudgmentDefaults.correction,
   );
+  const [spPrompt, setSpPrompt] = useState(sentenceParsingDefaults.prompt);
+  const [spSentence, setSpSentence] = useState(
+    sentenceParsingDefaults.sentence,
+  );
+  const [spTargets, setSpTargets] = useState<
+    { role: SentenceParsingRole; tokenIndices: number[] }[]
+  >(sentenceParsingDefaults.targets);
+  const [spSelectedIndices, setSpSelectedIndices] = useState<number[]>([]);
+  const [spSelectedRole, setSpSelectedRole] =
+    useState<SentenceParsingRole>("subject");
   const [showPreview, setShowPreview] = useState(true);
   const [notice, setNotice] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -129,6 +156,10 @@ export default function NewQuestionPage() {
   const wordTokens = useMemo(
     () => tokenizeSentenceForWordArrangement(wordAnswerSentence),
     [wordAnswerSentence],
+  );
+  const spTokens = useMemo(
+    () => tokenizeSentenceForParsing(spSentence),
+    [spSentence],
   );
   const wordTokenData = useMemo(
     () => buildWordArrangementTokens(wordAnswerSentence, properNounIndices),
@@ -146,7 +177,9 @@ export default function NewQuestionPage() {
             ? scPrompt
             : questionType === "word_form"
               ? wfPrompt
-              : ujPrompt;
+              : questionType === "underline_judgment"
+                ? ujPrompt
+                : spPrompt;
 
   const questionJson: Question = useMemo(() => {
     const optionalFields = {
@@ -167,7 +200,7 @@ export default function NewQuestionPage() {
     if (questionType === "binary_choice") {
       return {
         type: "binary_choice",
-        prompt: binaryPrompt.trim(),
+        prompt: binaryPrompt.trim().replace(/\(\s*\)/g, "{{choice}}"),
         choices: binaryChoices.map((choice) => choice.trim()) as [
           string,
           string,
@@ -198,7 +231,7 @@ export default function NewQuestionPage() {
       return {
         type: "word_form",
         prompt: wfPrompt.trim(),
-        sentence: wfSentence.trim(),
+        sentence: wfSentence.trim().replace(/___/g, "{{blank}}"),
         baseWord: wfBaseWord.trim(),
         ...(wfHint.trim() ? { hint: wfHint.trim() } : {}),
         answer: wfAnswer.trim(),
@@ -213,11 +246,25 @@ export default function NewQuestionPage() {
       return {
         type: "underline_judgment",
         prompt: ujPrompt.trim(),
-        sentence: ujSentence.trim(),
+        sentence: ujSentence.trim().replace(/\[([^\]]+)\]/g, "{{ul}}$1{{/ul}}"),
         isCorrect: ujIsCorrect,
         ...(!ujIsCorrect && ujCorrection.trim()
           ? { correction: ujCorrection.trim() }
           : {}),
+        ...optionalFields,
+      };
+    }
+
+    if (questionType === "sentence_parsing") {
+      return {
+        type: "sentence_parsing",
+        prompt: spPrompt.trim(),
+        sentence: spSentence.trim(),
+        tokens: spTokens.filter(Boolean),
+        targets: spTargets.map((t) => ({
+          role: t.role,
+          tokenIndices: t.tokenIndices,
+        })),
         ...optionalFields,
       };
     }
@@ -261,6 +308,10 @@ export default function NewQuestionPage() {
     ujSentence,
     ujIsCorrect,
     ujCorrection,
+    spPrompt,
+    spSentence,
+    spTokens,
+    spTargets,
   ]);
 
   const jsonPreview = JSON.stringify(questionJson, null, 2);
@@ -308,7 +359,7 @@ export default function NewQuestionPage() {
       }
 
       if (!question.sentence.includes("{{blank}}")) {
-        return "문장에 {{blank}}를 반드시 포함시켜야 합니다.";
+        return "문장에 ___를 반드시 포함시켜야 합니다.";
       }
 
       if (!question.baseWord.trim()) {
@@ -331,7 +382,7 @@ export default function NewQuestionPage() {
         !question.sentence.includes("{{ul}}") ||
         !question.sentence.includes("{{/ul}}")
       ) {
-        return "문장에 {{ul}}...{{/ul}}로 밑줄 부분을 표시해야 합니다.";
+        return "문장에 [밑줄 부분] 형식으로 밑줄 구간을 표시해야 합니다.";
       }
 
       if (!question.isCorrect && !question.correction?.trim()) {
@@ -343,7 +394,7 @@ export default function NewQuestionPage() {
 
     if (question.type === "binary_choice") {
       if (!question.prompt.includes("{{choice}}")) {
-        return "이항대립 문항 본문에는 반드시 {{choice}}가 포함되어야 합니다.";
+        return "이항대립 문항 본문에 반드시 ( )를 포함시켜야 합니다.";
       }
 
       if (
@@ -355,6 +406,36 @@ export default function NewQuestionPage() {
 
       if (question.answer !== 0 && question.answer !== 1) {
         return "이항대립 정답 번호가 유효하지 않습니다.";
+      }
+
+      return "";
+    }
+
+    if (question.type === "sentence_parsing") {
+      if (!question.sentence.trim()) {
+        return "분석 대상 문장을 입력하세요.";
+      }
+
+      if (question.tokens.length === 0) {
+        return "토큰이 1개 이상 필요합니다.";
+      }
+
+      if (question.targets.length === 0) {
+        return "정답 그룹을 1개 이상 추가하세요.";
+      }
+
+      for (const target of question.targets) {
+        if (target.tokenIndices.length === 0) {
+          return "각 정답 그룹에 토큰이 1개 이상 선택되어야 합니다.";
+        }
+
+        if (
+          target.tokenIndices.some(
+            (i) => i < 0 || i >= question.tokens.length,
+          )
+        ) {
+          return "토큰 인덱스가 유효한 범위를 벗어났습니다.";
+        }
       }
 
       return "";
@@ -472,6 +553,7 @@ export default function NewQuestionPage() {
               <option value="sentence_construction">문장 완성</option>
               <option value="word_form">단어 변형</option>
               <option value="underline_judgment">밑줄 어법 판단</option>
+              <option value="sentence_parsing">문장 성분 분석</option>
             </select>
 
             <div className="min-w-0 flex-1 text-center text-sm font-semibold text-body-on-dark">
@@ -575,6 +657,10 @@ export default function NewQuestionPage() {
                     setWfPrompt(event.target.value);
                     return;
                   }
+                  if (questionType === "sentence_parsing") {
+                    setSpPrompt(event.target.value);
+                    return;
+                  }
                   setUjPrompt(event.target.value);
                 }}
                 placeholder={
@@ -588,14 +674,16 @@ export default function NewQuestionPage() {
                           ? "주어진 단어를 활용하고 필요한 표현을 추가해 문장을 완성하세요."
                           : questionType === "word_form"
                             ? "주어진 단어를 문맥에 맞게 알맞은 형태로 바꾸세요."
-                            : "다음 문장에서 밑줄 친 부분의 어법이 올바른지 판단하세요."
+                            : questionType === "sentence_parsing"
+                              ? "문장에서 주어, 동사, 전치사구를 찾아 표시하세요."
+                              : "다음 문장에서 밑줄 친 부분의 어법이 올바른지 판단하세요."
                 }
               />
             </label>
 
             {questionType === "binary_choice" ? (
               <p className="mt-2 text-xs leading-5 text-muted">
-                선택지가 들어갈 위치에 {"{{choice}}"}를 넣으세요.
+                선택지가 들어갈 위치에 ( )를 넣으세요. 예: The bus ( ) at 7 a.m.
               </p>
             ) : null}
 
@@ -614,15 +702,20 @@ export default function NewQuestionPage() {
 
             {questionType === "word_form" ? (
               <p className="mt-2 text-xs leading-5 text-muted">
-                빈칸 위치에 {"{{blank}}"}를 넣으세요. 예: I {"{{blank}}"} to
-                school yesterday.
+                빈칸 위치에 ___를 넣으세요. 예: I ___ to school yesterday.
               </p>
             ) : null}
 
             {questionType === "underline_judgment" ? (
               <p className="mt-2 text-xs leading-5 text-muted">
-                밑줄 부분을 {"{{ul}}"}...{"{{/ul}}"}로 감싸세요. 예: He{" "}
-                {"{{ul}}"}goed{"{{/ul}}"} to school yesterday.
+                밑줄 구간을 대괄호로 감싸세요. 예: He [goed] to school yesterday.
+              </p>
+            ) : null}
+
+            {questionType === "sentence_parsing" ? (
+              <p className="mt-2 text-xs leading-5 text-muted">
+                학생에게 보여줄 안내문입니다. 아래 문장과 정답 그룹 입력은
+                02 섹션에서 합니다.
               </p>
             ) : null}
           </section>
@@ -680,6 +773,64 @@ export default function NewQuestionPage() {
                   onSentenceChange={setUjSentence}
                   onIsCorrectChange={setUjIsCorrect}
                   onCorrectionChange={setUjCorrection}
+                />
+              ) : questionType === "sentence_parsing" ? (
+                <SentenceParsingEditor
+                  sentence={spSentence}
+                  tokens={spTokens}
+                  targets={spTargets}
+                  selectedIndices={spSelectedIndices}
+                  selectedRole={spSelectedRole}
+                  onSentenceChange={(value) => {
+                    setSpSentence(value);
+                    setSpSelectedIndices([]);
+                    const newTokenCount =
+                      tokenizeSentenceForParsing(value).length;
+                    setSpTargets((prev) =>
+                      prev
+                        .map((t) => ({
+                          ...t,
+                          tokenIndices: t.tokenIndices.filter(
+                            (i) => i < newTokenCount,
+                          ),
+                        }))
+                        .filter((t) => t.tokenIndices.length > 0),
+                    );
+                  }}
+                  onToggleIndex={(index) =>
+                    setSpSelectedIndices((prev) =>
+                      prev.includes(index)
+                        ? prev.filter((i) => i !== index)
+                        : [...prev, index],
+                    )
+                  }
+                  onRoleChange={setSpSelectedRole}
+                  onAddTarget={() => {
+                    if (spSelectedIndices.length === 0) return;
+                    const normalizedIndices =
+                      normalizeTokenIndices(spSelectedIndices);
+                    const isDuplicate = spTargets.some(
+                      (t) =>
+                        t.role === spSelectedRole &&
+                        t.tokenIndices.length === normalizedIndices.length &&
+                        t.tokenIndices.every(
+                          (idx, i) => idx === normalizedIndices[i],
+                        ),
+                    );
+                    if (!isDuplicate) {
+                      setSpTargets((prev) => [
+                        ...prev,
+                        {
+                          role: spSelectedRole,
+                          tokenIndices: normalizedIndices,
+                        },
+                      ]);
+                    }
+                    setSpSelectedIndices([]);
+                  }}
+                  onRemoveTarget={(index) =>
+                    setSpTargets((prev) => prev.filter((_, i) => i !== index))
+                  }
                 />
               ) : (
                 <WordArrangementEditor
@@ -747,6 +898,9 @@ export default function NewQuestionPage() {
                   ujPrompt={ujPrompt}
                   ujSentence={ujSentence}
                   ujIsCorrect={ujIsCorrect}
+                  spPrompt={spPrompt}
+                  spTokens={spTokens}
+                  spTargets={spTargets}
                 />
               </section>
             ) : null}
@@ -1090,6 +1244,9 @@ function StudentPreview({
   ujPrompt,
   ujSentence,
   ujIsCorrect,
+  spPrompt,
+  spTokens,
+  spTargets,
 }: {
   questionType: QuestionType;
   multiplePrompt: string;
@@ -1111,6 +1268,9 @@ function StudentPreview({
   ujPrompt: string;
   ujSentence: string;
   ujIsCorrect: boolean;
+  spPrompt: string;
+  spTokens: string[];
+  spTargets: { role: SentenceParsingRole; tokenIndices: number[] }[];
 }) {
   if (questionType === "binary_choice") {
     return (
@@ -1180,7 +1340,7 @@ function StudentPreview({
   }
 
   if (questionType === "word_form") {
-    const parts = wfSentence.split("{{blank}}");
+    const parts = wfSentence.split("___");
     const beforeBlank = parts[0] ?? "";
     const afterBlank = parts[1] ?? "";
 
@@ -1205,10 +1365,11 @@ function StudentPreview({
   }
 
   if (questionType === "underline_judgment") {
-    const parts = ujSentence.split(/\{\{ul\}\}|\{\{\/ul\}\}/);
-    const before = parts[0] ?? "";
-    const underlined = parts[1] ?? "";
-    const after = parts[2] ?? "";
+    const bracketOpen = ujSentence.indexOf("[");
+    const bracketClose = ujSentence.indexOf("]");
+    const before = bracketOpen >= 0 ? ujSentence.slice(0, bracketOpen) : ujSentence;
+    const underlined = bracketOpen >= 0 && bracketClose > bracketOpen ? ujSentence.slice(bracketOpen + 1, bracketClose) : "";
+    const after = bracketClose >= 0 ? ujSentence.slice(bracketClose + 1) : "";
 
     return (
       <div className="mt-3 rounded-lg border border-hairline-on-dark bg-canvas-dark p-4">
@@ -1241,6 +1402,50 @@ function StudentPreview({
             X
           </span>
         </div>
+      </div>
+    );
+  }
+
+  if (questionType === "sentence_parsing") {
+    return (
+      <div className="mt-3 rounded-lg border border-hairline-on-dark bg-canvas-dark p-4">
+        <p className="text-sm font-semibold leading-6 text-body-on-dark">
+          {spPrompt || "문장 성분을 찾아 표시하세요."}
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {spTokens.length > 0 ? (
+            spTokens.map((token, index) => (
+              <span
+                key={`sp-prev-token-${index}`}
+                className="inline-flex items-center rounded-md border border-hairline-on-dark bg-surface-card-dark px-3 py-1.5 text-sm font-semibold text-body-on-dark"
+              >
+                {token}
+              </span>
+            ))
+          ) : (
+            <p className="text-xs text-muted">문장을 입력하면 토큰이 표시됩니다.</p>
+          )}
+        </div>
+        {spTargets.length > 0 ? (
+          <div className="mt-3 grid gap-1.5">
+            <p className="text-xs text-muted">정답:</p>
+            {spTargets.map((target, index) => (
+              <div
+                key={`sp-prev-target-${index}`}
+                className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs"
+              >
+                <span className="font-semibold text-primary">
+                  {getRoleLabel(target.role)}
+                </span>
+                <span className="text-body-on-dark">
+                  {target.tokenIndices
+                    .map((i) => spTokens[i] ?? "")
+                    .join(" ")}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -1303,10 +1508,10 @@ function WordFormEditor({
           className="field-on-dark mt-2"
           value={sentence}
           onChange={(event) => onSentenceChange(event.target.value)}
-          placeholder="I {{blank}} to school yesterday."
+          placeholder="I ___ to school yesterday."
         />
         <p className="mt-1.5 text-xs leading-5 text-muted">
-          빈칸 위치에 {"{{blank}}"}를 입력하세요.
+          빈칸 위치에 ___를 입력하세요.
         </p>
       </label>
 
@@ -1386,10 +1591,10 @@ function UnderlineJudgmentEditor({
           className="field-on-dark mt-2"
           value={sentence}
           onChange={(event) => onSentenceChange(event.target.value)}
-          placeholder="He {{ul}}goed{{/ul}} to school yesterday."
+          placeholder="He [goed] to school yesterday."
         />
         <p className="mt-1.5 text-xs leading-5 text-muted">
-          밑줄 부분을 {"{{ul}}"}...{"{{/ul}}"}로 감싸세요.
+          밑줄 구간을 대괄호로 감싸세요. 예: He [goed] to school.
         </p>
       </label>
 
@@ -1432,6 +1637,170 @@ function UnderlineJudgmentEditor({
   );
 }
 
+const SP_ROLES: { value: SentenceParsingRole; label: string }[] = [
+  { value: "subject", label: "주어" },
+  { value: "verb", label: "동사" },
+  { value: "object", label: "목적어" },
+  { value: "complement", label: "보어" },
+  { value: "modifier", label: "수식어" },
+  { value: "prepositional", label: "전치사구" },
+];
+
+function SentenceParsingEditor({
+  sentence,
+  tokens,
+  targets,
+  selectedIndices,
+  selectedRole,
+  onSentenceChange,
+  onToggleIndex,
+  onRoleChange,
+  onAddTarget,
+  onRemoveTarget,
+}: {
+  sentence: string;
+  tokens: string[];
+  targets: { role: SentenceParsingRole; tokenIndices: number[] }[];
+  selectedIndices: number[];
+  selectedRole: SentenceParsingRole;
+  onSentenceChange: (value: string) => void;
+  onToggleIndex: (index: number) => void;
+  onRoleChange: (role: SentenceParsingRole) => void;
+  onAddTarget: () => void;
+  onRemoveTarget: (index: number) => void;
+}) {
+  const usedIndices = new Set(targets.flatMap((t) => t.tokenIndices));
+
+  const selectedPreview =
+    selectedIndices.length > 0
+      ? selectedIndices
+          .slice()
+          .sort((a, b) => a - b)
+          .map((i) => tokens[i] ?? "")
+          .join(" ")
+      : null;
+
+  return (
+    <div className="mt-4 grid gap-4">
+      <label className="block">
+        <span className="text-sm font-semibold text-body-on-dark">
+          분석 대상 문장
+        </span>
+        <input
+          className="field-on-dark mt-2"
+          value={sentence}
+          onChange={(e) => onSentenceChange(e.target.value)}
+          placeholder="The car over there belongs to Mike."
+        />
+        <p className="mt-1.5 text-xs leading-5 text-muted">
+          입력 후 아래 토큰을 클릭해 성분을 지정하세요. 끝 마침표는 자동으로
+          제거됩니다.
+        </p>
+      </label>
+
+      {tokens.length > 0 ? (
+        <div>
+          <p className="text-sm font-semibold text-body-on-dark">토큰 선택</p>
+          <p className="mt-1 text-xs text-muted">
+            클릭해 선택하고 아래에서 성분을 지정하세요. 복수 선택 가능합니다.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {tokens.map((token, index) => {
+              const isSelected = selectedIndices.includes(index);
+              const isUsed = usedIndices.has(index);
+              return (
+                <button
+                  key={`sp-edit-token-${index}`}
+                  type="button"
+                  onClick={() => onToggleIndex(index)}
+                  className={`inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-semibold transition ${
+                    isSelected
+                      ? "border-primary bg-primary text-on-primary"
+                      : isUsed
+                        ? "border-correct/50 bg-correct/10 text-body-on-dark"
+                        : "border-hairline-on-dark bg-canvas-dark text-body-on-dark hover:border-primary/40"
+                  }`}
+                >
+                  {token}
+                  <span className="ml-1 text-xs opacity-50">{index}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <p className="text-xs text-muted">
+          문장을 입력하면 토큰이 자동 생성됩니다.
+        </p>
+      )}
+
+      <div>
+        <p className="text-sm font-semibold text-body-on-dark">성분 선택</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {SP_ROLES.map((role) => (
+            <button
+              key={role.value}
+              type="button"
+              onClick={() => onRoleChange(role.value)}
+              className={`inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-semibold transition ${
+                selectedRole === role.value
+                  ? "border-primary bg-primary text-on-primary"
+                  : "border-hairline-on-dark bg-canvas-dark text-muted hover:text-body-on-dark"
+              }`}
+            >
+              {role.label}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={onAddTarget}
+          disabled={selectedIndices.length === 0}
+          className="mt-3 inline-flex items-center rounded-md border border-primary px-4 py-2 text-sm font-semibold text-primary transition hover:bg-primary/10 disabled:opacity-40"
+        >
+          {selectedPreview
+            ? `"${selectedPreview}" → ${getRoleLabel(selectedRole)} 추가`
+            : "토큰을 선택하세요"}
+        </button>
+      </div>
+
+      {targets.length > 0 ? (
+        <div>
+          <p className="text-sm font-semibold text-body-on-dark">정답 그룹</p>
+          <div className="mt-2 grid gap-2">
+            {targets.map((target, index) => (
+              <div
+                key={`sp-target-${index}`}
+                className="flex items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2"
+              >
+                <span className="text-sm text-body-on-dark">
+                  <span className="font-semibold text-primary">
+                    {getRoleLabel(target.role)}
+                  </span>
+                  {" — "}
+                  {target.tokenIndices
+                    .map((i) => tokens[i] ?? `[${i}]`)
+                    .join(" ")}
+                  <span className="ml-2 text-xs text-muted">
+                    (인덱스: {target.tokenIndices.join(", ")})
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onRemoveTarget(index)}
+                  className="text-xs text-muted hover:text-incorrect"
+                >
+                  삭제
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function InlineBinaryPreview({
   prompt,
   choices,
@@ -1442,9 +1811,11 @@ function InlineBinaryPreview({
   answer: number;
   tone: "dark";
 }) {
-  const [beforeChoice, afterChoice] = prompt.includes("{{choice}}")
-    ? prompt.split("{{choice}}")
-    : [prompt, ""];
+  const [beforeChoice, afterChoice] = prompt.includes("( )")
+    ? prompt.split("( )")
+    : prompt.includes("{{choice}}")
+      ? prompt.split("{{choice}}")
+      : [prompt, ""];
 
   return (
     <p className="text-sm leading-8 text-body-on-dark">

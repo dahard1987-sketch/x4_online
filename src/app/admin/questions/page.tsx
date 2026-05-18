@@ -17,8 +17,31 @@ function getTypeLabel(type: string) {
   if (type === "word_arrangement") return "단어 배열";
   if (type === "sentence_construction") return "문장 완성";
   if (type === "word_form") return "단어 변형";
-  if (type === "underline_judgment") return "밑줄 어법 판단";
+  if (type === "underline_judgment") return "밑줄 판단";
+  if (type === "sentence_parsing") return "성분 분석";
   return type;
+}
+
+function getAnswerPreview(question: QuestionListItem): string {
+  if (question.type === "multiple_choice" || question.type === "binary_choice") {
+    return question.choices[question.answer] ?? "";
+  }
+  if (question.type === "word_arrangement") {
+    return question.answer.join(" ");
+  }
+  if (
+    question.type === "sentence_construction" ||
+    question.type === "word_form"
+  ) {
+    return question.answer;
+  }
+  if (question.type === "underline_judgment") {
+    return question.isCorrect ? "O" : `X → ${question.correction ?? ""}`;
+  }
+  if (question.type === "sentence_parsing") {
+    return question.targets.length + "개 성분";
+  }
+  return "";
 }
 
 export default function QuestionsPage() {
@@ -69,7 +92,7 @@ export default function QuestionsPage() {
           </Link>
           <div className="flex flex-col gap-3 sm:flex-row">
             <Link className="button-secondary-on-dark" href="/dashboard">
-              대시보드로 돌아가기
+              대시보드
             </Link>
             <Link
               className="button-secondary-on-dark"
@@ -87,176 +110,56 @@ export default function QuestionsPage() {
         </nav>
       </header>
 
-      <section className="mx-auto max-w-page px-5 py-10 sm:px-6 lg:px-8">
-        <div className="max-w-2xl">
-          <p className="text-sm font-semibold text-primary">Questions</p>
-          <h1 className="mt-3 text-3xl font-bold text-body-on-dark sm:text-display-lg">
-            문항 목록
-          </h1>
-          <p className="mt-4 text-sm leading-6 text-muted">
-            Firestore `questions` 컬렉션에 저장된 문항을 최근 생성순으로
-            표시합니다.
-          </p>
+      <section className="mx-auto max-w-page px-5 py-8 sm:px-6 lg:px-8">
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-primary">Questions</p>
+            <h1 className="mt-2 text-2xl font-bold text-body-on-dark">
+              문항 목록
+            </h1>
+          </div>
+          <span className="text-sm text-muted">{questions.length}개</span>
         </div>
 
         {isLoading ? (
-          <p className="mt-10 rounded-xl border border-hairline-on-dark bg-surface-card-dark p-6 text-sm text-muted">
-            문항 목록을 불러오고 있습니다.
-          </p>
+          <p className="mt-6 text-sm text-muted">불러오는 중...</p>
         ) : null}
 
         {errorMessage ? (
-          <p className="mt-10 rounded-xl border border-incorrect bg-surface-card-dark p-6 text-sm text-body-on-dark">
+          <p className="mt-6 rounded-xl border border-incorrect bg-surface-card-dark p-5 text-sm text-body-on-dark">
             {errorMessage}
           </p>
         ) : null}
 
         {!isLoading && !errorMessage && questions.length === 0 ? (
-          <p className="mt-10 rounded-xl border border-hairline-on-dark bg-surface-card-dark p-6 text-sm text-muted">
-            아직 저장된 문항이 없습니다.
-          </p>
+          <p className="mt-6 text-sm text-muted">아직 저장된 문항이 없습니다.</p>
         ) : null}
 
-        <div className="mt-10 grid gap-4">
-          {questions.map((question) => (
-            <article
-              className="rounded-xl border border-hairline-on-dark bg-surface-card-dark p-5 sm:p-6"
+        <div className="mt-5 rounded-xl border border-hairline-on-dark bg-surface-card-dark">
+          {questions.map((question, index) => (
+            <div
               key={question.id}
+              className={`flex items-start gap-3 px-4 py-3 ${
+                index !== questions.length - 1
+                  ? "border-b border-hairline-on-dark"
+                  : ""
+              }`}
             >
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-sm border border-primary/40 px-2 py-1 text-xs font-semibold text-primary">
-                  {getTypeLabel(question.type)}
-                </span>
-                <span className="font-mono text-xs text-muted">
-                  {question.id.slice(0, 8)}…
-                </span>
-              </div>
-
-              <h2 className="mt-3 text-base font-semibold leading-snug text-body-on-dark">
-                {question.prompt}
-              </h2>
-
-              {question.type === "word_arrangement" ? (
-                <div className="mt-4">
-                  {question.hint ? (
-                    <p className="mb-3 text-sm leading-6 text-muted">
-                      {question.hint}
-                    </p>
-                  ) : null}
-                  <div className="flex flex-wrap gap-1.5">
-                    {question.words.map((word, index) => (
-                      <span
-                        className="rounded-pill border border-hairline-on-dark px-2 py-1 text-xs text-body-on-dark"
-                        key={`${question.id}-word-${index}`}
-                      >
-                        {word}
-                      </span>
-                    ))}
-                  </div>
-                  <p className="mt-3 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-semibold text-body-on-dark">
-                    {question.answer.join(" ")}
-                  </p>
-                </div>
-              ) : question.type === "sentence_construction" ? (
-                <div className="mt-4">
-                  {question.koreanHint ? (
-                    <p className="mb-3 text-sm leading-6 text-muted">
-                      {question.koreanHint}
-                    </p>
-                  ) : null}
-                  <div className="flex flex-wrap gap-1.5">
-                    {question.givenWords.map((word, index) => (
-                      <span
-                        className="rounded-pill border border-hairline-on-dark px-2 py-1 text-xs text-body-on-dark"
-                        key={`${question.id}-gw-${index}`}
-                      >
-                        {word}
-                      </span>
-                    ))}
-                  </div>
-                  <p className="mt-3 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-semibold text-body-on-dark">
-                    {question.answer}
-                  </p>
-                </div>
-              ) : question.type === "word_form" ? (
-                <div className="mt-4">
-                  {question.hint ? (
-                    <p className="mb-3 text-sm leading-6 text-muted">
-                      {question.hint}
-                    </p>
-                  ) : null}
-                  <p className="text-sm leading-7 text-body-on-dark">
-                    {question.sentence.replace("{{blank}}", "[___]")}{" "}
-                    <span className="font-semibold text-primary">
-                      ({question.baseWord})
-                    </span>
-                  </p>
-                  <p className="mt-3 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-semibold text-body-on-dark">
-                    {question.answer}
-                  </p>
-                </div>
-              ) : question.type === "underline_judgment" ? (
-                <div className="mt-4">
-                  {(() => {
-                    const parts = question.sentence.split(
-                      /\{\{ul\}\}|\{\{\/ul\}\}/,
-                    );
-                    const before = parts[0] ?? "";
-                    const underlined = parts[1] ?? "";
-                    const after = parts[2] ?? "";
-                    return (
-                      <p className="text-sm leading-7 text-body-on-dark">
-                        {before}
-                        <span className="underline decoration-2">
-                          {underlined}
-                        </span>
-                        {after}
-                      </p>
-                    );
-                  })()}
-                  <div className="mt-3 flex items-center gap-3">
-                    <span
-                      className={`rounded-md border px-3 py-1.5 text-sm font-bold ${
-                        question.isCorrect
-                          ? "border-correct/40 bg-correct/10 text-correct"
-                          : "border-incorrect/40 bg-incorrect/10 text-incorrect"
-                      }`}
-                    >
-                      {question.isCorrect ? "O" : "X"}
-                    </span>
-                    {!question.isCorrect && question.correction ? (
-                      <p className="text-sm text-muted">
-                        →{" "}
-                        <span className="font-semibold text-body-on-dark">
-                          {question.correction}
-                        </span>
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-              ) : (
-                <ul className="mt-4 grid gap-2 sm:grid-cols-2">
-                  {question.choices.map((choice, index) => (
-                    <li
-                      className={`rounded-md border px-3 py-2 text-sm ${
-                        question.answer === index
-                          ? "border-primary bg-primary/15 font-semibold text-body-on-dark"
-                          : "border-hairline-on-dark text-muted"
-                      }`}
-                      key={`${question.id}-${index}`}
-                    >
-                      {choice}
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {question.explanation ? (
-                <p className="mt-4 border-t border-hairline-on-dark pt-4 text-sm leading-6 text-muted">
-                  {question.explanation}
+              <span className="mt-0.5 shrink-0 rounded-sm border border-primary/40 px-2 py-0.5 text-xs font-semibold text-primary">
+                {getTypeLabel(question.type)}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-body-on-dark">
+                  {question.prompt}
                 </p>
-              ) : null}
-            </article>
+                <p className="mt-0.5 truncate text-xs text-muted">
+                  {getAnswerPreview(question)}
+                </p>
+              </div>
+              <span className="shrink-0 font-mono text-xs text-muted">
+                {question.id.slice(0, 6)}
+              </span>
+            </div>
           ))}
         </div>
       </section>

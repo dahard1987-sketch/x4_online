@@ -7,7 +7,8 @@ type QuestionBase = {
     | "word_arrangement"
     | "sentence_construction"
     | "word_form"
-    | "underline_judgment";
+    | "underline_judgment"
+    | "sentence_parsing";
   prompt: string;
   explanation?: string;
   tags?: string[];
@@ -60,10 +61,27 @@ export type UnderlineJudgmentQuestion = QuestionBase & {
   correction?: string;
 };
 
+export type SentenceParsingQuestion = QuestionBase & {
+  type: "sentence_parsing";
+  sentence: string;
+  tokens: string[];
+  targets: {
+    role:
+      | "subject"
+      | "verb"
+      | "object"
+      | "complement"
+      | "modifier"
+      | "prepositional";
+    tokenIndices: number[];
+  }[];
+};
+
 export type Question =
   | MultipleChoiceQuestion
   | BinaryChoiceQuestion
   | WordArrangementQuestion
   | SentenceConstructionQuestion
   | WordFormQuestion
-  | UnderlineJudgmentQuestion;
+  | UnderlineJudgmentQuestion
+  | SentenceParsingQuestion;

@@ -88,6 +88,9 @@ Firebase config 값을 코드에 하드코딩하지 않는다.
   - binary_choice
   - word_arrangement
   - sentence_construction
+  - word_form
+  - underline_judgment
+  - sentence_parsing
 - 관리자 문항 입력 UI는 컴팩트한 카드 에디터 스타일
 - 문항 목록(/admin/questions)은 raw 데이터 노출 없이 미리보기 형태로만 표시
 
@@ -118,6 +121,9 @@ Firebase config 값을 코드에 하드코딩하지 않는다.
   - binary_choice
   - word_arrangement
   - sentence_construction
+  - word_form
+  - underline_judgment
+  - sentence_parsing
 - ActivityRunner는 단일 유형 전용이 아님
 - Question union 배열을 받아 question.type에 따라 렌더링 분기
 - 마지막 문제의 제출 버튼은 "답안 제출" (녹색 button-correct 스타일)
@@ -214,9 +220,6 @@ sentence_construction:
 
 ## 아직 구현하지 않은 것
 
-- word_form 문항 유형
-- sentence_parsing 문항 유형
-- underline_judgment 문항 유형
 - students 컬렉션
 - admins 컬렉션
 - 관리자/학생 권한 분리
@@ -232,6 +235,20 @@ sentence_construction:
 - Phase 9: word_arrangement (단어 배열) 유형 구현 완료
 - Phase 10: sentence_construction (문장 완성) 유형 구현 완료
 - UX 개선: 폰트 확대, 로고 링크, 마지막 문제 버튼, 미리보기 문항 목록
+- Phase 11: word_form (단어 변형) 유형 구현 완료
+- Phase 12: underline_judgment (밑줄 어법 판단) 유형 구현 완료
+- Phase 13: sentence_parsing (문장 성분 분석) 유형 구현 완료
+
+## 핵심 전제 (변경 금지)
+
+- activity는 여러 유형의 문항을 섞어 포함할 수 있음
+- ActivityRunner는 Question union 배열을 받아 question.type에 따라 렌더링만 분기
+- 라운드(Full Round, Review Round)는 activity 전체 문항 기준으로 구성 — 유형별 분리 없음
+- Full Round: 전체 문항 셔플 → 점수 산정
+- Review Round: 직전 Full Round 오답만 셔플 → 점수 산정 대상 아님
+- Full Round 100점일 때만 활동 완료
+- attempts 저장 구조 유지 (firstRoundScore, bestScore, finalScore, roundSummaries, details)
+- 디자인 세부 판단 (간격, 카드 배치, 반응형 등)은 Claude의 판단을 우선
 
 다음 작업은 사용자가 별도로 지시한다.
 
@@ -242,12 +259,11 @@ sentence_construction:
 - Firestore 컬렉션 이름 변경 금지
 - activities 구조 변경 금지
 - attempts 구조 변경 금지
-- 기존 multiple_choice, binary_choice, word_arrangement, sentence_construction 기능 훼손 금지
+- 기존 모든 문항 유형 기능 훼손 금지 (multiple_choice, binary_choice, word_arrangement, sentence_construction, word_form, underline_judgment, sentence_parsing)
 - 관리자 권한 분리 구현 금지
 - students/admins 컬렉션 구현 금지
 - Cloud Functions 구현 금지
 - 외부 UI 라이브러리 추가 금지
-- word_form, sentence_parsing, underline_judgment 유형은 아직 구현 금지
 
 ## 자주 쓰는 명령어
 

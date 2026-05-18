@@ -394,6 +394,19 @@ export default function NewActivityPage() {
                                 {question.isCorrect ? "O" : "X"}
                               </span>
                             </p>
+                          ) : question.type === "sentence_parsing" ? (
+                            <div className="mt-3">
+                              <div className="flex flex-wrap gap-1.5">
+                                {question.tokens.map((token, index) => (
+                                  <span
+                                    className="rounded-pill border border-hairline-on-dark px-2 py-1 text-xs text-body-on-dark"
+                                    key={`${question.id}-sp-token-${index}`}
+                                  >
+                                    {token}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
                           ) : (
                             <>
                               <ul className="mt-3 grid gap-2 sm:grid-cols-2">

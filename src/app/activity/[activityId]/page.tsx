@@ -114,6 +114,32 @@ function normalizeQuestion(
     };
   }
 
+  if (type === "sentence_parsing") {
+    return {
+      id,
+      type,
+      prompt,
+      explanation,
+      spSentence: typeof data.sentence === "string" ? data.sentence : "",
+      spTokens: Array.isArray(data.tokens)
+        ? data.tokens.filter((t): t is string => typeof t === "string")
+        : [],
+      spTargets: Array.isArray(data.targets)
+        ? (data.targets as unknown[]).map((t) => {
+            const target = t as Record<string, unknown>;
+            return {
+              role: typeof target.role === "string" ? target.role : "",
+              tokenIndices: Array.isArray(target.tokenIndices)
+                ? target.tokenIndices.filter(
+                    (i): i is number => typeof i === "number",
+                  )
+                : [],
+            };
+          })
+        : [],
+    };
+  }
+
   return {
     id,
     type,

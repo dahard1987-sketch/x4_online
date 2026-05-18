@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AttemptDetail,
   AttemptRoundSummary,
@@ -10,6 +10,12 @@ import { compareWordArrangementAnswer } from "@/lib/wordArrangement";
 import { compareSentenceConstructionAnswer } from "@/lib/sentenceConstruction";
 import { compareWordFormAnswer } from "@/lib/wordForm";
 import { compareUnderlineJudgmentAnswer } from "@/lib/underlineJudgment";
+import {
+  compareSentenceParsingTargets,
+  formatTargetPreview,
+  getRoleLabel,
+} from "@/lib/sentenceParsing";
+import type { SentenceParsingTarget } from "@/lib/sentenceParsing";
 
 export type ActivityRunnerQuestion = {
   id: string;
@@ -39,6 +45,10 @@ export type ActivityRunnerQuestion = {
   underlineSentence?: string;
   underlineIsCorrect?: boolean;
   underlineCorrection?: string;
+  // sentence_parsing
+  spSentence?: string;
+  spTokens?: string[];
+  spTargets?: { role: string; tokenIndices: number[] }[];
   // common
   explanation?: string;
 };
@@ -83,6 +93,13 @@ type UnderlineJudgmentRunnerQuestion = ActivityRunnerQuestion & {
   underlineIsCorrect: boolean;
 };
 
+type SentenceParsingRunnerQuestion = ActivityRunnerQuestion & {
+  type: "sentence_parsing";
+  spSentence: string;
+  spTokens: string[];
+  spTargets: { role: string; tokenIndices: number[] }[];
+};
+
 function isWordArrangementQuestion(
   question: ActivityRunnerQuestion,
 ): question is WordArrangementRunnerQuestion {
@@ -120,6 +137,17 @@ function isUnderlineJudgmentQuestion(
     question.type === "underline_judgment" &&
     typeof question.underlineSentence === "string" &&
     typeof question.underlineIsCorrect === "boolean"
+  );
+}
+
+function isSentenceParsingQuestion(
+  question: ActivityRunnerQuestion,
+): question is SentenceParsingRunnerQuestion {
+  return (
+    question.type === "sentence_parsing" &&
+    typeof question.spSentence === "string" &&
+    Array.isArray(question.spTokens) &&
+    Array.isArray(question.spTargets)
   );
 }
 
@@ -320,6 +348,8 @@ export default function ActivityRunner({
   );
   const [underlineCorrectionInput, setUnderlineCorrectionInput] =
     useState("");
+  const [spTokenRoles, setSpTokenRoles] = useState<Record<number, string>>({});
+  const [spActiveRole, setSpActiveRole] = useState<string | null>(null);
 
   const { roundQuestions, shuffledChoices, shuffledWords } = roundState;
   const currentQuestion = roundQuestions[questionIndex];
@@ -341,6 +371,10 @@ export default function ActivityRunner({
       : null;
   const underlineCurrentQuestion =
     currentQuestion && isUnderlineJudgmentQuestion(currentQuestion)
+      ? currentQuestion
+      : null;
+  const sentenceParsingCurrentQuestion =
+    currentQuestion && isSentenceParsingQuestion(currentQuestion)
       ? currentQuestion
       : null;
   const progressPercent =
@@ -429,6 +463,32 @@ export default function ActivityRunner({
           ? "O (어법상 올바름)"
           : `X → ${currentQuestion.underlineCorrection ?? "?"}`;
       }
+    } else if (isSentenceParsingQuestion(currentQuestion)) {
+      const hasAnyRole = Object.keys(spTokenRoles).length > 0;
+      if (!hasAnyRole) {
+        return;
+      }
+      const roleMap = new Map<string, number[]>();
+      Object.entries(spTokenRoles).forEach(([indexStr, role]) => {
+        const idx = parseInt(indexStr, 10);
+        if (!roleMap.has(role)) roleMap.set(role, []);
+        roleMap.get(role)!.push(idx);
+      });
+      const studentTargets: SentenceParsingTarget[] = Array.from(
+        roleMap.entries(),
+      ).map(([role, indices]) => ({
+        role: role as SentenceParsingTarget["role"],
+        tokenIndices: [...indices].sort((a, b) => a - b),
+      }));
+      isCorrect = compareSentenceParsingTargets(
+        studentTargets,
+        currentQuestion.spTargets as SentenceParsingTarget[],
+      );
+      if (!isCorrect) {
+        correctAnswer = (currentQuestion.spTargets as SentenceParsingTarget[])
+          .map((t) => formatTargetPreview(t, currentQuestion.spTokens))
+          .join(", ");
+      }
     } else if (isSupportedQuestion(currentQuestion)) {
       if (selectedAnswer === null) {
         return;
@@ -505,6 +565,8 @@ export default function ActivityRunner({
       setWordFormInput("");
       setUnderlineSelected(null);
       setUnderlineCorrectionInput("");
+      setSpTokenRoles({});
+      setSpActiveRole(null);
       setFeedback(null);
       return;
     }
@@ -529,6 +591,8 @@ export default function ActivityRunner({
       setWordFormInput("");
       setUnderlineSelected(null);
       setUnderlineCorrectionInput("");
+      setSpTokenRoles({});
+      setSpActiveRole(null);
       setFeedback(null);
       setRoundCorrectCount(0);
       setRoundWrongQuestions([]);
@@ -589,10 +653,36 @@ export default function ActivityRunner({
     setWordFormInput("");
     setUnderlineSelected(null);
     setUnderlineCorrectionInput("");
+    setSpTokenRoles({});
     setFeedback(null);
     setRoundCorrectCount(0);
     setRoundWrongQuestions([]);
   }
+
+  const handleSubmitRef = useRef(handleSubmit);
+  handleSubmitRef.current = handleSubmit;
+  const moveToNextQuestionRef = useRef(moveToNextQuestion);
+  moveToNextQuestionRef.current = moveToNextQuestion;
+  const feedbackRef = useRef(feedback);
+  feedbackRef.current = feedback;
+  const isCompleteRef = useRef(isComplete);
+  isCompleteRef.current = isComplete;
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Enter") return;
+      if (isCompleteRef.current) return;
+      const el = event.target as HTMLElement;
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return;
+      if (feedbackRef.current) {
+        moveToNextQuestionRef.current();
+      } else {
+        handleSubmitRef.current();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   if (questions.length === 0) {
     return (
@@ -735,6 +825,7 @@ export default function ActivityRunner({
                 sentenceInput={sentenceInput}
                 isDisabled={Boolean(feedback)}
                 onInputChange={setSentenceInput}
+                onSubmit={handleSubmit}
               />
             ) : wordArrangementCurrentQuestion ? (
               <WordArrangementPrompt
@@ -758,6 +849,7 @@ export default function ActivityRunner({
                 wordFormInput={wordFormInput}
                 isDisabled={Boolean(feedback)}
                 onInputChange={setWordFormInput}
+                onSubmit={handleSubmit}
               />
             ) : underlineCurrentQuestion ? (
               <UnderlineJudgmentPrompt
@@ -767,6 +859,28 @@ export default function ActivityRunner({
                 isDisabled={Boolean(feedback)}
                 onSelect={setUnderlineSelected}
                 onCorrectionChange={setUnderlineCorrectionInput}
+              />
+            ) : sentenceParsingCurrentQuestion ? (
+              <SentenceParsingPrompt
+                question={sentenceParsingCurrentQuestion}
+                tokenRoles={spTokenRoles}
+                activeRole={spActiveRole}
+                isDisabled={Boolean(feedback)}
+                onSelectRole={(role) =>
+                  setSpActiveRole((prev) => (prev === role ? null : role))
+                }
+                onClickToken={(index) => {
+                  if (feedback || !spActiveRole) return;
+                  setSpTokenRoles((prev) => {
+                    const next = { ...prev };
+                    if (prev[index] === spActiveRole) {
+                      delete next[index];
+                    } else {
+                      next[index] = spActiveRole;
+                    }
+                    return next;
+                  });
+                }}
               />
             ) : !supportedCurrentQuestion ? (
               <UnsupportedQuestionMessage />
@@ -843,7 +957,10 @@ export default function ActivityRunner({
                           ? underlineSelected === null ||
                             (!underlineSelected &&
                               underlineCorrectionInput.trim() === "")
-                          : selectedAnswer === null || !supportedCurrentQuestion
+                          : sentenceParsingCurrentQuestion
+                            ? Object.keys(spTokenRoles).length === 0
+                            : selectedAnswer === null ||
+                              !supportedCurrentQuestion
                 }
               >
                 {isLastQuestion ? "답안 제출" : "제출"}
@@ -863,8 +980,8 @@ function UnsupportedQuestionMessage() {
         아직 지원하지 않는 문항 유형입니다.
       </p>
       <p className="mt-2 text-sm leading-6 text-body-on-light">
-        현재 객관식, 이항대립, 단어 배열, 문장 완성, 단어 변형, 밑줄 어법 판단
-        문항을 지원합니다.
+        현재 객관식, 이항대립, 단어 배열, 문장 완성, 단어 변형, 밑줄 어법 판단,
+        문장 성분 분석 문항을 지원합니다.
       </p>
     </div>
   );
@@ -875,12 +992,17 @@ function WordFormPrompt({
   wordFormInput,
   isDisabled,
   onInputChange,
+  onSubmit,
 }: {
   question: WordFormRunnerQuestion;
   wordFormInput: string;
   isDisabled: boolean;
   onInputChange: (value: string) => void;
+  onSubmit?: () => void;
 }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
   const parts = question.wordFormSentence.split("{{blank}}");
   const beforeBlank = parts[0] ?? "";
   const afterBlank = parts[1] ?? "";
@@ -901,6 +1023,7 @@ function WordFormPrompt({
         >
           <span>{beforeBlank}</span>
           <input
+            ref={inputRef}
             className="inline-block rounded-md border-2 border-primary/60 bg-surface-strong-light px-4 text-body-on-light placeholder:text-muted/50 focus:border-primary focus:outline-none disabled:opacity-60"
             style={{
               fontSize: "36px",
@@ -911,6 +1034,12 @@ function WordFormPrompt({
             }}
             value={wordFormInput}
             onChange={(event) => onInputChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !isDisabled && wordFormInput.trim()) {
+                event.preventDefault();
+                onSubmit?.();
+              }
+            }}
             placeholder={question.wordFormBaseWord}
             disabled={isDisabled}
           />
@@ -949,7 +1078,7 @@ function UnderlineJudgmentPrompt({
       <p className="text-question-body text-body-on-light">{question.prompt}</p>
 
       <div className="mt-6">
-        <p className="text-base leading-9 text-body-on-light">
+        <p className="text-question-body text-body-on-light">
           <span>{beforeUnderline}</span>
           <span className="underline decoration-2">{underlinedText}</span>
           <span>{afterUnderline}</span>
@@ -1005,13 +1134,27 @@ function MultipleChoicePrompt({
   isDisabled: boolean;
   onSelect: (originalIndex: number) => void;
 }) {
+  useEffect(() => {
+    if (isDisabled) return;
+    function onKeyDown(event: KeyboardEvent) {
+      const digit = parseInt(event.key, 10);
+      if (isNaN(digit) || digit < 1 || digit > choices.length) return;
+      const el = event.target as HTMLElement;
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return;
+      const choice = choices[digit - 1];
+      if (choice) onSelect(choice.originalIndex);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isDisabled, choices, onSelect]);
+
   return (
     <>
       <p className="text-question-body text-body-on-light">{question.prompt}</p>
       <div className="mt-8 grid gap-3">
-        {choices.map((choice) => (
+        {choices.map((choice, displayIndex) => (
           <button
-            className={`min-h-12 rounded-md border px-4 py-3 text-left text-base font-semibold transition ${
+            className={`min-h-12 rounded-md border px-4 py-3 text-left text-xl font-semibold transition ${
               selectedAnswer === choice.originalIndex
                 ? "border-primary bg-primary-subtle text-body-on-light"
                 : "border-hairline-on-light bg-canvas-light text-body-on-light hover:bg-surface-soft-light"
@@ -1021,6 +1164,9 @@ function MultipleChoicePrompt({
             onClick={() => onSelect(choice.originalIndex)}
             disabled={isDisabled}
           >
+            <span className="mr-2 tabular-nums text-sm font-bold text-muted/50">
+              {displayIndex + 1}
+            </span>
             {choice.text}
           </button>
         ))}
@@ -1042,6 +1188,20 @@ function BinaryChoicePrompt({
   isDisabled: boolean;
   onSelect: (originalIndex: number) => void;
 }) {
+  useEffect(() => {
+    if (isDisabled) return;
+    function onKeyDown(event: KeyboardEvent) {
+      const digit = parseInt(event.key, 10);
+      if (digit !== 1 && digit !== 2) return;
+      const el = event.target as HTMLElement;
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return;
+      const choice = choices[digit - 1];
+      if (choice) onSelect(choice.originalIndex);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isDisabled, choices, onSelect]);
+
   const [beforeChoice, afterChoice] = prompt.includes("{{choice}}")
     ? prompt.split("{{choice}}")
     : [prompt, ""];
@@ -1057,7 +1217,7 @@ function BinaryChoicePrompt({
             key={choice.originalIndex}
           >
             <button
-              className={`inline-flex min-h-9 items-center rounded-pill border px-3 text-base font-semibold transition ${
+              className={`inline-flex min-h-12 items-center gap-1 rounded-pill border px-4 text-xl font-semibold transition ${
                 selectedAnswer === choice.originalIndex
                   ? "border-primary bg-primary text-on-primary"
                   : "border-hairline-on-light bg-canvas-light text-body-on-light hover:bg-surface-soft-light"
@@ -1066,6 +1226,9 @@ function BinaryChoicePrompt({
               onClick={() => onSelect(choice.originalIndex)}
               disabled={isDisabled}
             >
+              <span className="tabular-nums text-sm font-bold opacity-40">
+                {index + 1}
+              </span>
               {choice.text}
             </button>
             {index < choices.length - 1 ? (
@@ -1104,6 +1267,28 @@ function WordArrangementPrompt({
     (w) => !selectedOriginalIndices.has(w.originalIndex),
   );
 
+  // Fixed key labels: position in shuffledWords (1-based), never renumbered
+  const keyLabelMap = new Map<number, number>();
+  shuffledWords.forEach((word, idx) => {
+    if (idx < 9) keyLabelMap.set(word.originalIndex, idx + 1);
+  });
+
+  useEffect(() => {
+    if (isDisabled) return;
+    function onKeyDown(event: KeyboardEvent) {
+      const digit = parseInt(event.key, 10);
+      if (isNaN(digit) || digit < 1 || digit > 9) return;
+      const el = event.target as HTMLElement;
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return;
+      const word = shuffledWords[digit - 1];
+      if (!word) return;
+      if (selectedOriginalIndices.has(word.originalIndex)) return;
+      onSelectWord(word);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isDisabled, shuffledWords, selectedOriginalIndices, onSelectWord]);
+
   return (
     <>
       <p className="text-question-body text-body-on-light">{question.prompt}</p>
@@ -1131,7 +1316,7 @@ function WordArrangementPrompt({
             <div className="flex flex-wrap gap-2">
               {selectedWordTokens.map((token, positionIndex) => (
                 <button
-                  className={`inline-flex min-h-9 items-center rounded-md border px-3 text-sm font-semibold transition ${
+                  className={`inline-flex min-h-12 items-center rounded-md border px-3 text-xl font-semibold transition ${
                     isDisabled
                       ? "border-primary/40 bg-primary-subtle text-body-on-light"
                       : "border-primary bg-primary-subtle text-body-on-light hover:border-primary hover:bg-primary/20"
@@ -1165,23 +1350,31 @@ function WordArrangementPrompt({
           단어 목록
         </p>
         <div className="mt-2 flex flex-wrap gap-2">
-          {availableWords.map((word) => (
-            <button
-              className={`inline-flex min-h-10 items-center rounded-md border px-4 text-sm font-semibold transition ${
-                isDisabled
-                  ? "border-hairline-on-light bg-surface-soft-light text-muted"
-                  : "border-hairline-on-light bg-canvas-light text-body-on-light hover:border-primary/40 hover:bg-surface-soft-light"
-              }`}
-              key={`word-${word.originalIndex}`}
-              type="button"
-              onClick={() => {
-                if (!isDisabled) onSelectWord(word);
-              }}
-              disabled={isDisabled}
-            >
-              {word.text}
-            </button>
-          ))}
+          {availableWords.map((word) => {
+            const keyLabel = keyLabelMap.get(word.originalIndex);
+            return (
+              <button
+                className={`inline-flex min-h-12 items-center gap-1.5 rounded-md border px-3 text-xl font-semibold transition ${
+                  isDisabled
+                    ? "border-hairline-on-light bg-surface-soft-light text-muted"
+                    : "border-hairline-on-light bg-canvas-light text-body-on-light hover:border-primary/40 hover:bg-surface-soft-light"
+                }`}
+                key={`word-${word.originalIndex}`}
+                type="button"
+                onClick={() => {
+                  if (!isDisabled) onSelectWord(word);
+                }}
+                disabled={isDisabled}
+              >
+                {keyLabel !== undefined ? (
+                  <span className="tabular-nums text-xs font-bold leading-none text-muted/50">
+                    {keyLabel}
+                  </span>
+                ) : null}
+                {word.text}
+              </button>
+            );
+          })}
           {availableWords.length === 0 && !isDisabled ? (
             <p className="py-1 text-sm text-muted">모든 단어를 배치했습니다.</p>
           ) : null}
@@ -1196,12 +1389,17 @@ function SentenceConstructionPrompt({
   sentenceInput,
   isDisabled,
   onInputChange,
+  onSubmit,
 }: {
   question: SentenceConstructionRunnerQuestion;
   sentenceInput: string;
   isDisabled: boolean;
   onInputChange: (value: string) => void;
+  onSubmit?: () => void;
 }) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { textareaRef.current?.focus(); }, []);
+
   return (
     <>
       <p className="text-question-body text-body-on-light">{question.prompt}</p>
@@ -1217,7 +1415,7 @@ function SentenceConstructionPrompt({
           <div className="mt-2 flex flex-wrap gap-2">
             {question.givenWords.map((word, index) => (
               <span
-                className="inline-flex min-h-9 items-center rounded-pill border border-hairline-on-light bg-surface-soft-light px-3 text-sm font-semibold text-body-on-light"
+                className="inline-flex min-h-12 items-center rounded-pill border border-hairline-on-light bg-surface-soft-light px-3 text-xl font-semibold text-body-on-light"
                 key={`${word}-${index}`}
               >
                 {word}
@@ -1232,14 +1430,128 @@ function SentenceConstructionPrompt({
           내 답안
         </p>
         <textarea
-          className="mt-2 w-full resize-none rounded-lg border border-hairline-on-light bg-surface-strong-light p-3 text-sm leading-7 text-body-on-light placeholder:text-muted focus:border-primary focus:outline-none disabled:text-muted"
+          ref={textareaRef}
+          className="mt-2 w-full resize-none rounded-lg border border-hairline-on-light bg-surface-strong-light p-3 text-xl leading-8 text-body-on-light placeholder:text-muted focus:border-primary focus:outline-none disabled:text-muted"
           rows={3}
           value={sentenceInput}
           onChange={(event) => onInputChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey && !isDisabled && sentenceInput.trim()) {
+              event.preventDefault();
+              onSubmit?.();
+            }
+          }}
           disabled={isDisabled}
           placeholder="영어 문장을 입력하세요."
         />
       </div>
+    </>
+  );
+}
+
+const PARSING_ROLES: { value: string; label: string }[] = [
+  { value: "subject", label: "주어" },
+  { value: "verb", label: "동사" },
+  { value: "object", label: "목적어" },
+  { value: "complement", label: "보어" },
+  { value: "modifier", label: "수식어" },
+  { value: "prepositional", label: "전치사구" },
+];
+
+const ROLE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
+  subject:      { bg: "#dbeafe", border: "#3b82f6", text: "#1d4ed8" },  // 파랑
+  verb:         { bg: "#fecaca", border: "#ef4444", text: "#b91c1c" },  // 빨강
+  object:       { bg: "#e9d5ff", border: "#a855f7", text: "#7e22ce" },  // 보라
+  complement:   { bg: "#fed7aa", border: "#f97316", text: "#c2410c" },  // 주황
+  modifier:     { bg: "#bbf7d0", border: "#22c55e", text: "#15803d" },  // 초록
+  prepositional:{ bg: "#a5f3fc", border: "#06b6d4", text: "#0e7490" },  // 청록
+};
+
+
+function SentenceParsingPrompt({
+  question,
+  tokenRoles,
+  activeRole,
+  isDisabled,
+  onSelectRole,
+  onClickToken,
+}: {
+  question: SentenceParsingRunnerQuestion;
+  tokenRoles: Record<number, string>;
+  activeRole: string | null;
+  isDisabled: boolean;
+  onSelectRole: (role: string) => void;
+  onClickToken: (index: number) => void;
+}) {
+  const activeColor = activeRole ? ROLE_COLORS[activeRole] : undefined;
+
+  return (
+    <>
+      <p className="text-question-body text-body-on-light">{question.prompt}</p>
+
+      {/* 역할 선택 버튼 (페인트 팔레트) */}
+      {!isDisabled ? (
+        <div className="mt-6 flex flex-wrap gap-2">
+          {PARSING_ROLES.map((role) => {
+            const rc = ROLE_COLORS[role.value];
+            const isActive = activeRole === role.value;
+            return (
+              <button
+                key={role.value}
+                type="button"
+                onClick={() => onSelectRole(role.value)}
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-md border px-3 text-sm font-semibold transition"
+                style={
+                  isActive && rc
+                    ? { background: rc.bg, borderColor: rc.border, color: rc.text, boxShadow: `0 0 0 2px ${rc.border}` }
+                    : rc
+                      ? { borderColor: rc.border, color: rc.text }
+                      : undefined
+                }
+              >
+                <span
+                  className="inline-block h-3 w-3 rounded-full"
+                  style={rc ? { background: rc.text } : undefined}
+                />
+                {role.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {/* 토큰 pill들 */}
+      <div className="mt-5 flex flex-wrap gap-2">
+        {question.spTokens.map((token, index) => {
+          const role = tokenRoles[index];
+          const roleColor = role ? ROLE_COLORS[role] : undefined;
+          const canClick = !isDisabled && activeRole !== null;
+          return (
+            <button
+              key={`sp-token-${index}`}
+              type="button"
+              onClick={() => onClickToken(index)}
+              disabled={isDisabled || activeRole === null}
+              className="inline-flex min-h-12 items-center rounded-md border px-3 text-xl font-semibold transition disabled:opacity-60"
+              style={
+                roleColor
+                  ? { background: roleColor.bg, borderColor: roleColor.border, color: roleColor.text }
+                  : canClick && activeColor
+                    ? { borderColor: activeColor.border, color: "var(--color-body-on-light)" }
+                    : { borderColor: "var(--color-hairline-on-light)" }
+              }
+            >
+              {token}
+            </button>
+          );
+        })}
+      </div>
+
+      {!isDisabled && !activeRole ? (
+        <p className="mt-3 text-sm text-muted">
+          위에서 성분을 선택한 뒤 토큰을 클릭하세요.
+        </p>
+      ) : null}
     </>
   );
 }

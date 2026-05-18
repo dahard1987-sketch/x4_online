@@ -253,7 +253,7 @@ Q: 다음 중 어법상 올바른 문장은?
 
 ### Type 2. 문장 성분 선택 (`sentence_parsing`)
 
-학생이 문장의 각 부분을 클릭해 문장 성분(주어/동사/목적어/보어 등)으로 지정.
+학생이 문장의 토큰을 선택하고 문장 성분 role을 지정하는 유형.
 
 **구조**
 ```typescript
@@ -261,30 +261,52 @@ Q: 다음 중 어법상 올바른 문장은?
   type: "sentence_parsing",
   prompt: string,           // 안내문 (예: "각 성분을 찾아 표시하세요")
   sentence: string,         // 분석 대상 문장
-  tokens: string[],         // 토큰 단위 분할 (선택지)
+  tokens: string[],         // 토큰 단위 분할 (공백 기준, 끝 punctuation 제거)
   targets: {                // 정답: 각 성분이 어떤 토큰들로 구성되는지
     role: "subject" | "verb" | "object" | "complement" | "modifier" | "prepositional",
-    tokenIndices: number[]  // 해당 성분에 포함되는 토큰 인덱스들
+    tokenIndices: number[]  // 해당 성분에 포함되는 토큰 인덱스들 (오름차순)
   }[],
   explanation?: string
 }
 ```
 
+**토큰화 규칙**
+- 공백 기준으로 나눔
+- 문장 끝 terminal punctuation(`.!?`)은 마지막 토큰에서 제거
+- can't, doesn't 같은 contraction은 하나의 token으로 유지
+- token text가 중복되어도 index가 다르면 별도 token으로 취급
+
+**정답 판정 규칙**
+- role과 tokenIndices 집합이 모두 일치해야 정답
+- target 순서는 달라도 됨 (set 비교)
+- tokenIndices는 정렬 후 비교
+- 전체 target 개수가 같아야 함
+- 빠진 target이나 추가 target이 있으면 오답
+- 같은 role이 여러 개 등장할 수 있음
+- token index 기준으로 판정 (token text 아님)
+
+**라운드 구성 원칙**
+- activity 안에서 다른 유형과 섞여 출제 가능
+- Full Round는 activity 전체 문항(모든 유형 포함)을 셔플해 출제
+- Review Round는 직전 Full Round 오답 문항들을 셔플해 출제
+- 라운드는 유형별로 따로 구성하지 않음
+
 **UI 흐름**
-1. 문장이 토큰 단위(보통 단어)로 클릭 가능하게 표시
-2. 학생이 토큰을 하나 또는 여러 개 선택 → 토큰 묶음이 하이라이트됨
-3. 옆에 뜬 성분 라벨 버튼 (주어 / 동사 / 목적어 / 보어 / 수식어) 중 선택
-4. 선택된 묶음에 성분 라벨이 부여되며, 색상으로 표시
-5. 모든 필수 성분을 표시한 후 "제출" 버튼
+1. 문장이 토큰 단위(보통 단어)로 pill/button 형태로 표시
+2. 학생이 토큰을 하나 또는 여러 개 클릭해 선택
+3. 성분 버튼(주어 / 동사 / 목적어 / 보어 / 수식어 / 전치사구) 중 하나 선택
+4. "표시 추가" 버튼으로 그룹 확정 → 내 답안 목록에 추가
+5. 모든 성분을 추가한 후 "제출" 버튼
+6. 제출 후 정답/오답 피드백 + 정답 그룹 요약 표시
 
 **예시**
 ```
 The car over there belongs to Mike.
 
 정답:
-- "The car over there" → 주어
-- "belongs" → 동사
-- "to Mike" → 수식어(전치사구) 또는 부사구
+- "The car over there" → 주어 (tokenIndices: [0,1,2,3])
+- "belongs" → 동사 (tokenIndices: [4])
+- "to Mike" → 전치사구 (tokenIndices: [5,6])
 
 데이터:
 {
